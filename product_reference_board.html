@@ -1,0 +1,1104 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>상품 레퍼런스 보드</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', sans-serif;
+      background: #f0f0f0;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Toolbar ── */
+    #toolbar {
+      position: fixed; top: 0; left: 0; right: 0; height: 58px;
+      background: #fff; border-bottom: 1px solid #e5e7eb;
+      display: flex; align-items: center; padding: 0 14px; gap: 6px;
+      z-index: 1000; box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
+    #logo { font-size: 15px; font-weight: 700; color: #111; white-space: nowrap; letter-spacing: -0.3px; }
+    #url-input {
+      flex: 1; padding: 8px 12px; border: 1.5px solid #d1d5db;
+      border-radius: 8px; font-size: 13px; outline: none; transition: border-color 0.15s; min-width: 0;
+    }
+    #url-input:focus { border-color: #6366f1; }
+    .tb-sep { width: 1px; height: 24px; background: #e5e7eb; flex-shrink: 0; }
+    .tb-btn {
+      padding: 7px 12px; border: none; border-radius: 7px; cursor: pointer;
+      font-size: 13px; font-weight: 500; white-space: nowrap; transition: opacity 0.15s;
+    }
+    .tb-btn:hover { opacity: 0.82; }
+    .tb-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    #add-btn    { background: #6366f1; color: #fff; }
+    #manual-btn { background: #f3f4f6; color: #374151; }
+    #text-btn   { background: #f3f4f6; color: #374151; font-weight: 700; }
+    #rect-btn, #circle-btn { background: #f3f4f6; color: #374151; font-size: 15px; padding: 6px 10px; }
+    #clear-btn  { background: #fef2f2; color: #ef4444; }
+
+    /* ── Tab bar ── */
+    #tab-bar {
+      position: fixed; top: 58px; left: 0; right: 0; height: 42px;
+      background: #fff; border-bottom: 1px solid #e5e7eb;
+      display: flex; align-items: flex-end; padding: 0 12px; gap: 2px;
+      z-index: 900; overflow-x: auto; overflow-y: hidden;
+    }
+    #tab-bar::-webkit-scrollbar { height: 0; }
+    .tab {
+      display: flex; align-items: center; gap: 5px; padding: 6px 12px;
+      border-radius: 8px 8px 0 0; cursor: pointer; font-size: 13px; color: #6b7280;
+      white-space: nowrap; border: 1px solid transparent; border-bottom: none;
+      transition: background 0.15s, color 0.15s; max-width: 160px; position: relative;
+      bottom: 0; user-select: none;
+    }
+    .tab:hover { background: #f9fafb; color: #374151; }
+    .tab.active { background: #fff; color: #111; font-weight: 600; border-color: #e5e7eb; border-bottom-color: #fff; z-index: 1; }
+    .tab-name { flex: 1; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .tab-name-input { flex: 1; border: none; outline: none; font-size: 13px; font-weight: 600; font-family: inherit; color: #111; background: transparent; min-width: 0; width: 80px; }
+    .tab-del { width: 16px; height: 16px; border-radius: 50%; border: none; background: none; cursor: pointer; color: #9ca3af; font-size: 14px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; padding: 0; transition: background 0.1s, color 0.1s; }
+    .tab-del:hover { background: #fee2e2; color: #ef4444; }
+    #tab-add { padding: 4px 10px; border: none; background: none; cursor: pointer; font-size: 18px; color: #9ca3af; border-radius: 6px; align-self: center; flex-shrink: 0; transition: color 0.15s, background 0.15s; }
+    #tab-add:hover { color: #6366f1; background: #f3f4f6; }
+
+    /* ── Board ── */
+    #board-wrap { position: fixed; top: 100px; left: 0; right: 0; bottom: 0; overflow: auto; }
+    #board { position: relative; width: 6000px; height: 5000px; background-image: radial-gradient(circle, #c9c9c9 1px, transparent 1px); background-size: 28px 28px; }
+
+    /* ── Selection ── */
+    .board-item.selected { outline: 2px solid #6366f1 !important; outline-offset: 2px; }
+
+    /* ── Product Card ── */
+    .product-card {
+      position: absolute; width: 230px; background: #fff; border-radius: 12px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.12); cursor: grab; user-select: none;
+      overflow: hidden; transition: box-shadow 0.2s;
+    }
+    .product-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.18); }
+    .product-card.dragging { box-shadow: 0 10px 32px rgba(0,0,0,0.22); cursor: grabbing; z-index: 9999 !important; }
+    .card-drag-handle {
+      height: 18px; background: #f9fafb; border-bottom: 1px solid #f3f4f6;
+      cursor: grab; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .card-drag-handle:hover { background: #f3f4f6; }
+    .card-drag-handle::before { content: '⋯'; color: #d1d5db; font-size: 13px; letter-spacing: 3px; }
+    .product-card.dragging .card-drag-handle { cursor: grabbing; }
+    .card-img-wrap { width: 100%; height: 210px; background: #f3f4f6; overflow: hidden; position: relative; cursor: pointer; }
+    .card-img-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.3s; }
+    .product-card:hover .card-img-wrap img { transform: scale(1.03); }
+    .img-upload-overlay {
+      position: absolute; inset: 0; background: rgba(0,0,0,0.35); opacity: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: white; font-size: 12px; font-weight: 500; transition: opacity 0.2s; pointer-events: none;
+    }
+    .card-img-wrap:hover .img-upload-overlay { opacity: 1; }
+    .no-image { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 12px; flex-direction: column; gap: 6px; }
+    .no-image-icon { font-size: 28px; }
+    .card-label { position: absolute; top: 8px; right: 8px; width: 16px; height: 16px; border-radius: 50%; cursor: pointer; border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.3); z-index: 2; }
+    .card-body { padding: 10px 12px 6px; }
+    .card-field {
+      font-size: 13px; font-weight: 600; color: #111; line-height: 1.35; margin-bottom: 5px;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+      cursor: text; min-height: 18px;
+    }
+    .card-field:focus { outline: none; -webkit-line-clamp: unset; overflow: visible; background: #f9fafb; border-radius: 4px; padding: 2px 4px; margin: -2px -4px; }
+    .card-field[data-field="price"] { font-size: 15px; color: #6366f1; }
+    .card-field[data-field="material"] { font-size: 11px; color: #6b7280; font-weight: 400; }
+    .card-field:empty:before { content: attr(data-placeholder); color: #d1d5db; font-weight: 400; }
+    .card-source a { font-size: 10px; color: #9ca3af; text-decoration: none; }
+    .card-source a:hover { color: #6366f1; text-decoration: underline; }
+    .card-footer { display: flex; align-items: flex-end; gap: 4px; padding: 4px 10px 8px; border-top: 1px solid #f3f4f6; margin-top: 6px; }
+    .card-memo { flex: 1; border: none; resize: none; font-size: 11px; color: #374151; background: transparent; outline: none; font-family: inherit; height: 36px; line-height: 1.4; }
+    .card-memo::placeholder { color: #d1d5db; }
+    .card-del { background: none; border: none; cursor: pointer; color: #d1d5db; font-size: 18px; padding: 0 2px; line-height: 1; flex-shrink: 0; transition: color 0.15s; }
+    .card-del:hover { color: #ef4444; }
+
+    /* ── Color picker popup ── */
+    .color-popup { position: absolute; top: 30px; right: 6px; background: white; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.18); padding: 8px; display: none; flex-wrap: wrap; gap: 6px; width: 108px; z-index: 200; }
+    .color-popup.open { display: flex; }
+    .color-dot { width: 22px; height: 22px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; transition: transform 0.1s; }
+    .color-dot:hover { transform: scale(1.2); }
+
+    /* ── Text item ── */
+    .text-item {
+      position: absolute; min-width: 120px; min-height: 36px;
+      background: transparent; cursor: grab; user-select: none;
+    }
+    .text-item.dragging { cursor: grabbing; }
+    .text-drag-handle {
+      height: 14px; background: rgba(99,102,241,0.08); border-radius: 4px 4px 0 0;
+      cursor: grab; display: flex; align-items: center; justify-content: center;
+    }
+    .text-drag-handle:hover { background: rgba(99,102,241,0.15); }
+    .text-drag-handle::before { content: '⋯'; color: #9ca3af; font-size: 12px; letter-spacing: 2px; }
+    .text-content {
+      min-width: 120px; min-height: 24px; padding: 6px 8px;
+      font-size: 14px; color: #111; white-space: pre-wrap; word-break: break-word;
+      outline: none; cursor: text; border-radius: 0 0 4px 4px;
+    }
+    .text-item:not(.editing) .text-content { cursor: inherit; }
+    .text-item.selected .text-drag-handle { background: rgba(99,102,241,0.15); }
+
+    /* ── Shape item ── */
+    .shape-item {
+      position: absolute; cursor: grab; user-select: none;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .shape-item.dragging { cursor: grabbing; }
+    .shape-label { font-size: 13px; font-weight: 500; color: inherit; pointer-events: none; padding: 4px; text-align: center; word-break: break-word; }
+    .resize-handle {
+      position: absolute; bottom: -5px; right: -5px;
+      width: 11px; height: 11px; background: #6366f1; border-radius: 2px;
+      cursor: se-resize; z-index: 10; opacity: 0;
+    }
+    .shape-item.selected .resize-handle,
+    .shape-item:hover .resize-handle { opacity: 1; }
+    .shape-color-btn {
+      position: absolute; top: -10px; right: -10px;
+      width: 20px; height: 20px; border-radius: 50%; border: 2px solid white;
+      cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.3); opacity: 0; z-index: 10;
+    }
+    .shape-item.selected .shape-color-btn,
+    .shape-item:hover .shape-color-btn { opacity: 1; }
+
+    /* ── Loading / Toast / Modal ── */
+    #loading { display: none; position: fixed; top: 100px; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.65); z-index: 800; align-items: center; justify-content: center; }
+    #loading.active { display: flex; }
+    .loading-inner { background: white; border-radius: 12px; padding: 20px 28px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); display: flex; align-items: center; gap: 12px; font-size: 14px; color: #374151; }
+    .spinner { width: 20px; height: 20px; border: 2px solid #e5e7eb; border-top-color: #6366f1; border-radius: 50%; animation: spin 0.7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(10px); padding: 9px 18px; border-radius: 20px; font-size: 13px; background: #1f2937; color: white; z-index: 2000; opacity: 0; transition: opacity 0.25s, transform 0.25s; pointer-events: none; white-space: nowrap; }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    #modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 3000; align-items: center; justify-content: center; }
+    #modal-overlay.open { display: flex; }
+    #modal { background: white; border-radius: 14px; padding: 26px; width: 440px; max-width: 94vw; max-height: 90vh; overflow-y: auto; }
+    #modal h3 { font-size: 16px; font-weight: 700; margin-bottom: 6px; color: #111; }
+    #modal .modal-sub { font-size: 12px; color: #9ca3af; margin-bottom: 16px; }
+    .field { margin-bottom: 14px; }
+    .field label { display: block; font-size: 12px; font-weight: 500; color: #6b7280; margin-bottom: 5px; }
+    .field input, .field textarea { width: 100%; padding: 9px 11px; border: 1.5px solid #e5e7eb; border-radius: 7px; font-size: 13px; font-family: inherit; outline: none; transition: border-color 0.15s; }
+    .field input:focus, .field textarea:focus { border-color: #6366f1; }
+    .field textarea { resize: vertical; min-height: 60px; }
+    .img-upload-field { display: flex; gap: 8px; align-items: center; }
+    .img-upload-field input[type="text"] { flex: 1; }
+    .img-file-btn { padding: 9px 12px; background: #f3f4f6; border: 1.5px solid #e5e7eb; border-radius: 7px; cursor: pointer; font-size: 12px; color: #374151; white-space: nowrap; flex-shrink: 0; }
+    .img-file-btn:hover { background: #e5e7eb; }
+    .img-preview { width: 100%; height: 100px; object-fit: cover; border-radius: 7px; margin-top: 6px; display: none; }
+    .modal-warn { background: #fef3c7; border-radius: 8px; padding: 9px 12px; font-size: 12px; color: #92400e; margin-bottom: 14px; display: none; }
+    .modal-warn.show { display: block; }
+    .modal-btns { display: flex; gap: 8px; margin-top: 18px; }
+    .modal-btns button { flex: 1; padding: 10px; border-radius: 8px; border: none; cursor: pointer; font-size: 13px; font-weight: 500; }
+    .btn-ok { background: #6366f1; color: white; }
+    .btn-ok:hover { background: #4f46e5; }
+    .btn-cancel { background: #f3f4f6; color: #374151; }
+  </style>
+</head>
+<body>
+
+<!-- ── Toolbar ── -->
+<div id="toolbar">
+  <span id="logo">📌 레퍼런스 보드</span>
+  <span id="server-status" style="font-size:11px;padding:3px 8px;border-radius:10px;background:#fee2e2;color:#ef4444;white-space:nowrap">● 서버 꺼짐</span>
+  <input type="text" id="url-input" placeholder="상품 URL 입력 후 Enter" autocomplete="off" spellcheck="false">
+  <button id="add-btn" class="tb-btn" onclick="fetchProduct()">추가</button>
+  <div class="tb-sep"></div>
+  <button id="manual-btn" class="tb-btn" onclick="openModal(null)" title="URL 없이 상품 직접 입력">상품 카드</button>
+  <button id="text-btn"   class="tb-btn" onclick="addTextItem()" title="텍스트 추가">T 텍스트</button>
+  <button id="rect-btn"   class="tb-btn" onclick="addShapeItem('rect')"   title="사각형 추가">□</button>
+  <button id="circle-btn" class="tb-btn" onclick="addShapeItem('circle')" title="원 추가">○</button>
+  <div class="tb-sep"></div>
+  <button id="clear-btn" class="tb-btn" onclick="clearBoard()">탭 비우기</button>
+</div>
+
+<!-- ── Tab bar ── -->
+<div id="tab-bar">
+  <button id="tab-add" onclick="addTab()" title="탭 추가">＋</button>
+</div>
+
+<!-- ── Board ── -->
+<div id="board-wrap">
+  <div id="board"></div>
+</div>
+
+<div id="loading"><div class="loading-inner"><div class="spinner"></div><span>상품 정보를 불러오는 중...</span></div></div>
+<div id="toast"></div>
+
+<!-- ── Modal ── -->
+<div id="modal-overlay">
+  <div id="modal">
+    <h3>상품 카드 추가</h3>
+    <p class="modal-sub">URL 없이도 추가 가능합니다. 이미지는 URL 입력 또는 파일로 직접 업로드하세요.</p>
+    <div class="modal-warn" id="modal-warn">자동 파싱에 실패했습니다. 직접 입력해 주세요.</div>
+    <div class="field"><label>상품명</label><input type="text" id="m-name" placeholder="상품명 입력"></div>
+    <div class="field"><label>가격</label><input type="text" id="m-price" placeholder="예: $128 / ₩152,000"></div>
+    <div class="field"><label>소재</label><input type="text" id="m-material" placeholder="예: 85% Polyester, 15% Spandex"></div>
+    <div class="field">
+      <label>이미지</label>
+      <div class="img-upload-field">
+        <input type="text" id="m-image" placeholder="이미지 URL (선택)" oninput="onImageUrlInput()">
+        <label class="img-file-btn">파일 선택<input type="file" id="m-image-file" accept="image/*" style="display:none" onchange="onImageFileSelect(this)"></label>
+      </div>
+      <img id="m-image-preview" class="img-preview" alt="미리보기">
+    </div>
+    <div class="field"><label>상품 페이지 URL</label><input type="text" id="m-url" placeholder="원본 링크 (선택)"></div>
+    <div class="field"><label>메모</label><textarea id="m-memo" placeholder="기획 메모 등 자유롭게 입력"></textarea></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal()">취소</button>
+      <button class="btn-ok" onclick="submitManual()">추가</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Constants ──
+const LABEL_COLORS = ['#6366f1','#ec4899','#f59e0b','#10b981','#3b82f6','#ef4444','#8b5cf6','#14b8a6'];
+const SHAPE_COLORS = ['#6366f1','#ec4899','#f59e0b','#10b981','#3b82f6','#ef4444','#f3f4f6','#1f2937'];
+const STORE_KEY    = 'refboard_v3';
+const SERVER       = window.location.origin;   // 서버 URL 자동 감지
+
+// ── Socket.IO ──
+const socket = io(SERVER, { transports: ['polling', 'websocket'] });
+
+socket.on('connect', () => {
+  console.log('[소켓] 연결됨');
+});
+socket.on('disconnect', () => {
+  updateStatusEl('● 연결 끊김', '#fef3c7', '#92400e');
+});
+socket.on('connect_error', () => {
+  updateStatusEl('● 서버 꺼짐', '#fee2e2', '#ef4444');
+});
+socket.on('user_count', ({ count }) => {
+  updateStatusEl(`● 연결됨 (${count}명)`, '#dcfce7', '#16a34a');
+});
+
+// 서버에서 전체 상태 수신 (접속 시 1회)
+socket.on('state_sync', ({ state, userCount }) => {
+  const serverHasData = state?.tabs?.some(t => t.cards?.length > 0);
+  if (!serverHasData) {
+    // 서버가 비어있으면 로컬 데이터를 서버에 업로드
+    const local = loadLocalData();
+    if (local?.tabs?.some(t => t.cards?.length > 0)) {
+      socket.emit('state_upload', local);
+      return;
+    }
+  }
+  applyFullState(state);
+  updateStatusEl(`● 연결됨 (${userCount}명)`, '#dcfce7', '#16a34a');
+});
+
+// 다른 사용자의 변경사항 수신
+socket.on('item_add',    ({ tabId, item })           => { remoteItemAdd(tabId, item); });
+socket.on('item_update', ({ tabId, itemId, patch })  => { remoteItemUpdate(tabId, itemId, patch); });
+socket.on('item_delete', ({ tabId, itemId })         => { remoteItemDelete(tabId, itemId); });
+socket.on('tab_add',     ({ tab })                   => { remoteTabAdd(tab); });
+socket.on('tab_delete',  ({ tabId })                 => { remoteTabDelete(tabId); });
+socket.on('tab_rename',  ({ tabId, name })           => { remoteTabRename(tabId, name); });
+socket.on('tab_clear',   ({ tabId })                 => { remoteTabClear(tabId); });
+
+function updateStatusEl(text, bg, color) {
+  const el = document.getElementById('server-status');
+  if (el) { el.textContent = text; el.style.background = bg; el.style.color = color; }
+}
+function applyFullState(state) {
+  tabs = state.tabs || [];
+  if (tabs.length === 0) tabs = [{ id: newId(), name: '탭 1', cards: [] }];
+  if (!tabs.find(t => t.id === activeTabId)) activeTabId = tabs[0].id;
+  saveData();
+  renderTabBar();
+  renderBoard();
+}
+
+// ── 원격 이벤트 적용 ──
+function remoteItemAdd(tabId, item) {
+  const tab = tabs.find(t => t.id === tabId);
+  if (!tab) return;
+  if (!tab.cards.find(i => String(i.id) === String(item.id))) {
+    tab.cards.push(item);
+    saveData();
+    if (tabId === activeTabId) {
+      const type = item.type || 'card';
+      if (type === 'card')  renderCard(item);
+      if (type === 'text')  renderText(item);
+      if (type === 'shape') renderShape(item);
+    }
+  }
+}
+function remoteItemUpdate(tabId, itemId, patch) {
+  const tab = tabs.find(t => t.id === tabId);
+  if (!tab) return;
+  const item = tab.cards.find(i => String(i.id) === String(itemId));
+  if (!item) return;
+  Object.assign(item, patch);
+  saveData();
+  if (tabId === activeTabId) {
+    const el = document.querySelector(`[data-id="${itemId}"]`);
+    if (!el) return;
+    if (patch.x != null) el.style.left = patch.x + 'px';
+    if (patch.y != null) el.style.top  = patch.y + 'px';
+    if (patch.w != null) el.style.width  = patch.w + 'px';
+    if (patch.h != null) el.style.height = patch.h + 'px';
+    // 내용 변경 시 카드 재렌더
+    const contentKeys = ['name','price','material','image','memo','content','label','fillColor'];
+    if (contentKeys.some(k => patch[k] != null)) {
+      el.remove();
+      const type = item.type || 'card';
+      if (type === 'card')  renderCard(item);
+      if (type === 'text')  renderText(item);
+      if (type === 'shape') renderShape(item);
+    }
+  }
+}
+function remoteItemDelete(tabId, itemId) {
+  const tab = tabs.find(t => t.id === tabId);
+  if (!tab) return;
+  tab.cards = tab.cards.filter(i => String(i.id) !== String(itemId));
+  saveData();
+  if (tabId === activeTabId) {
+    const el = document.querySelector(`[data-id="${itemId}"]`);
+    if (el) el.remove();
+  }
+}
+function remoteTabAdd(tab) {
+  if (!tabs.find(t => t.id === tab.id)) { tabs.push(tab); saveData(); renderTabBar(); }
+}
+function remoteTabDelete(tabId) {
+  tabs = tabs.filter(t => t.id !== tabId);
+  if (!tabs.length) tabs = [{ id: newId(), name: '탭 1', cards: [] }];
+  if (activeTabId === tabId) { activeTabId = tabs[0].id; renderBoard(); }
+  saveData(); renderTabBar();
+}
+function remoteTabRename(tabId, name) {
+  const tab = tabs.find(t => t.id === tabId);
+  if (tab) { tab.name = name; saveData(); renderTabBar(); }
+}
+function remoteTabClear(tabId) {
+  const tab = tabs.find(t => t.id === tabId);
+  if (tab) {
+    tab.cards = []; saveData();
+    if (tabId === activeTabId) renderBoard();
+  }
+}
+
+// ── State ──
+let tabs        = [];
+let activeTabId = null;
+let zTop        = 10;
+let colIdx      = 0;
+let selectedId  = null;   // 현재 선택된 아이템
+let clipboard   = null;   // 복사된 아이템 (인앱 클립보드)
+let imageBase64 = null;   // 모달에서 업로드한 이미지 base64
+
+// ── Init ──
+window.addEventListener('load', () => {
+  loadData();
+  renderTabBar();
+  renderBoard();
+
+  document.getElementById('url-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') fetchProduct();
+  });
+  // 보드 클릭 시 선택 해제
+  document.getElementById('board').addEventListener('mousedown', e => {
+    if (e.target === document.getElementById('board')) deselectAll();
+  });
+
+  // 키보드 단축키
+  document.addEventListener('keydown', onKeyDown);
+
+  checkServer();
+  setInterval(checkServer, 10000);
+  setInterval(() => fetch(`${SERVER}/heartbeat`, { method: 'POST' }).catch(() => {}), 3000);
+  window.addEventListener('beforeunload', () => navigator.sendBeacon(`${SERVER}/shutdown`));
+});
+
+function onKeyDown(e) {
+  const tag = document.activeElement?.tagName;
+  const isEditing = tag === 'INPUT' || tag === 'TEXTAREA' ||
+    document.activeElement?.isContentEditable;
+
+  // Ctrl+C
+  if (e.ctrlKey && e.key === 'c' && !isEditing) {
+    if (selectedId) {
+      const item = currentItems().find(i => String(i.id) === String(selectedId));
+      if (item) { clipboard = JSON.parse(JSON.stringify(item)); toast('복사됨'); }
+    }
+  }
+  // Ctrl+V
+  if (e.ctrlKey && e.key === 'v' && !isEditing) {
+    if (clipboard) {
+      const copy = JSON.parse(JSON.stringify(clipboard));
+      copy.id = newId();
+      copy.x  = (copy.x || 0) + 24;
+      copy.y  = (copy.y || 0) + 24;
+      addItem(copy);
+      toast('붙여넣기 됨');
+    }
+  }
+  // Delete
+  if ((e.key === 'Delete' || e.key === 'Backspace') && !isEditing) {
+    if (selectedId) deleteItem(selectedId);
+  }
+  // Escape
+  if (e.key === 'Escape') deselectAll();
+}
+
+// ── Persistence ──
+function loadLocalData() {
+  try { return JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch(e) { return null; }
+}
+function loadData() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) { const d = JSON.parse(raw); tabs = d.tabs || []; activeTabId = d.activeTabId || null; }
+  } catch(e) {}
+  if (tabs.length === 0) {
+    let old = [];
+    try { old = JSON.parse(localStorage.getItem('refboard_v2') || '[]'); } catch(e) {}
+    tabs = [{ id: newId(), name: '탭 1', cards: old }];
+  }
+  if (!tabs.find(t => t.id === activeTabId)) activeTabId = tabs[0].id;
+}
+function saveData() { localStorage.setItem(STORE_KEY, JSON.stringify({ tabs, activeTabId })); }
+function currentTab()   { return tabs.find(t => t.id === activeTabId); }
+function currentItems() { return currentTab()?.cards || []; }
+function newId()        { return 'i' + Date.now() + Math.random().toString(36).slice(2, 5); }
+
+// ── Tab bar ──
+function renderTabBar() {
+  const bar = document.getElementById('tab-bar');
+  bar.querySelectorAll('.tab').forEach(el => el.remove());
+  const addBtn = document.getElementById('tab-add');
+  tabs.forEach(tab => {
+    const el = document.createElement('div');
+    el.className = 'tab' + (tab.id === activeTabId ? ' active' : '');
+    el.dataset.id = tab.id;
+    el.innerHTML = `<span class="tab-name">${esc(tab.name)}</span><button class="tab-del" onclick="deleteTab(event,'${tab.id}')">×</button>`;
+    el.addEventListener('click', () => switchTab(tab.id));
+    el.querySelector('.tab-name').addEventListener('dblclick', e => { e.stopPropagation(); startRenameTab(el, tab); });
+    bar.insertBefore(el, addBtn);
+  });
+}
+function switchTab(id) {
+  if (activeTabId === id) return;
+  activeTabId = id; deselectAll(); saveData(); renderTabBar(); renderBoard();
+}
+function addTab() {
+  const tab = { id: newId(), name: `탭 ${tabs.length + 1}`, cards: [] };
+  tabs.push(tab); activeTabId = tab.id; saveData(); renderTabBar(); renderBoard();
+  socket.emit('tab_add', { tab });
+  const el = document.querySelector(`.tab[data-id="${tab.id}"]`);
+  if (el) startRenameTab(el, tab);
+}
+function deleteTab(e, id) {
+  e.stopPropagation();
+  if (tabs.length === 1) { toast('탭은 최소 1개 이상 있어야 합니다'); return; }
+  const tab = tabs.find(t => t.id === id);
+  const n = tab?.cards?.length || 0;
+  if (n > 0 && !confirm(`"${tab.name}" 탭의 항목 ${n}개가 삭제됩니다. 계속할까요?`)) return;
+  const idx = tabs.findIndex(t => t.id === id);
+  tabs.splice(idx, 1);
+  if (activeTabId === id) activeTabId = tabs[Math.min(idx, tabs.length - 1)].id;
+  saveData(); renderTabBar(); renderBoard();
+  socket.emit('tab_delete', { tabId: id });
+}
+function startRenameTab(el, tab) {
+  const nameEl = el.querySelector('.tab-name');
+  const input  = document.createElement('input');
+  input.className = 'tab-name-input'; input.value = tab.name; input.maxLength = 20;
+  nameEl.replaceWith(input); input.focus(); input.select();
+  const commit = () => {
+    const newName = input.value.trim() || tab.name;
+    if (newName !== tab.name) socket.emit('tab_rename', { tabId: tab.id, name: newName });
+    tab.name = newName; saveData(); renderTabBar();
+  };
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') { input.value = tab.name; input.blur(); } e.stopPropagation(); });
+}
+
+// ── Board render ──
+function renderBoard() {
+  document.getElementById('board').innerHTML = '';
+  currentItems().forEach(item => {
+    const type = item.type || 'card';
+    if (type === 'card')  renderCard(item);
+    if (type === 'text')  renderText(item);
+    if (type === 'shape') renderShape(item);
+  });
+}
+
+// ── Selection ──
+function selectItem(id) {
+  deselectAll();
+  selectedId = id;
+  const el = document.querySelector(`[data-id="${id}"]`);
+  if (el) el.classList.add('selected');
+}
+function deselectAll() {
+  selectedId = null;
+  document.querySelectorAll('.board-item.selected').forEach(el => el.classList.remove('selected'));
+}
+function deleteItem(id) {
+  const el = document.querySelector(`[data-id="${id}"]`);
+  if (el) { el.style.opacity = '0'; el.style.transform = 'scale(0.92)'; el.style.transition = '0.15s'; setTimeout(() => el.remove(), 160); }
+  const tab = currentTab();
+  if (tab) tab.cards = tab.cards.filter(i => String(i.id) !== String(id));
+  if (selectedId === String(id)) selectedId = null;
+  saveData();
+  socket.emit('item_delete', { tabId: activeTabId, itemId: id });
+}
+
+// ── Add item (generic) ──
+function addItem(data) {
+  const items = currentItems();
+  data.id = data.id || newId();
+  if (data.x == null) {
+    const wrap = document.getElementById('board-wrap');
+    data.x = wrap.scrollLeft + 40 + (items.length % 5) * 60;
+    data.y = wrap.scrollTop  + 40 + Math.floor(items.length / 5) * 60;
+  }
+  items.push(data);
+  saveData();
+  socket.emit('item_add', { tabId: activeTabId, item: data });
+  const type = data.type || 'card';
+  let el;
+  if (type === 'card')  el = renderCard(data);
+  if (type === 'text')  el = renderText(data);
+  if (type === 'shape') el = renderShape(data);
+  return el;
+}
+
+// ── Product Card ──
+function addCard(data, skipBackup) {
+  const items = currentItems();
+  data.type  = 'card';
+  data.id    = data.id    || newId();
+  data.color = data.color || LABEL_COLORS[colIdx % LABEL_COLORS.length];
+  colIdx++;
+  if (data.x == null) {
+    const wrap = document.getElementById('board-wrap');
+    data.x = wrap.scrollLeft + 40 + (items.filter(i => (i.type||'card') === 'card').length % 5) * 250;
+    data.y = wrap.scrollTop  + 40 + Math.floor(items.filter(i => (i.type||'card') === 'card').length / 5) * 380;
+  }
+  items.push(data);
+  saveData();
+  socket.emit('item_add', { tabId: activeTabId, item: data });
+  if (!skipBackup) {
+    const tab = currentTab();
+    fetch(`${SERVER}/backup`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tab: tab?.name||'', name: data.name||'', price: data.price||'', material: data.material||'', url: data.url||'' })
+    }).catch(() => {});
+  }
+  return renderCard(data);
+}
+
+function renderCard(data) {
+  const board = document.getElementById('board');
+  const card  = document.createElement('div');
+  card.className  = 'product-card board-item';
+  card.dataset.id = data.id;
+  card.style.left   = (data.x || 40) + 'px';
+  card.style.top    = (data.y || 40) + 'px';
+  card.style.zIndex = ++zTop;
+
+  const dotsHtml = LABEL_COLORS.map(c =>
+    `<div class="color-dot" style="background:${c}" onclick="setCardColor(event,'${data.id}','${c}')"></div>`
+  ).join('');
+  const imgHtml = data.image
+    ? `<img src="${esc(data.image)}" alt="" loading="lazy" onerror="this.closest('.card-img-wrap').innerHTML='<div class=\\'no-image\\'><span class=\\'no-image-icon\\'>🖼️</span><span>이미지 없음</span></div><div class=\\'img-upload-overlay\\'>📷 이미지 변경</div>'">`
+    : `<div class="no-image"><span class="no-image-icon">🖼️</span><span>클릭하여 이미지 추가</span></div>`;
+
+  card.innerHTML = `
+    <div class="card-drag-handle"></div>
+    <div class="card-img-wrap" onclick="triggerImgUpload(event,'${data.id}')">
+      ${imgHtml}
+      <div class="img-upload-overlay">📷 이미지 변경</div>
+      <input type="file" id="file-${data.id}" accept="image/*" style="display:none" onchange="handleImgFile(this,'${data.id}')">
+      <div class="card-label" style="background:${esc(data.color||'#6366f1')}" onclick="toggleColorPicker(event,'${data.id}')">
+        <div class="color-popup" id="cp-${data.id}">${dotsHtml}</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="card-field" data-field="name" data-placeholder="상품명" contenteditable="false">${esc(data.name||'')}</div>
+      <div class="card-field" data-field="price" data-placeholder="가격" contenteditable="false">${esc(data.price||'')}</div>
+      <div class="card-field" data-field="material" data-placeholder="소재" contenteditable="false">${esc(data.material||'')}</div>
+      ${data.url ? `<div class="card-source"><a href="${esc(data.url)}" target="_blank" onclick="event.stopPropagation()">🔗 원본 보기</a></div>` : ''}
+    </div>
+    <div class="card-footer">
+      <textarea class="card-memo" placeholder="기획 메모..." onmousedown="event.stopPropagation()">${esc(data.memo||'')}</textarea>
+      <button class="card-del" onclick="deleteItem('${data.id}')" title="삭제">×</button>
+    </div>`;
+
+  // 필드 더블클릭 → 인라인 편집
+  card.querySelectorAll('.card-field').forEach(field => {
+    field.addEventListener('dblclick', e => {
+      e.stopPropagation();
+      field.contentEditable = 'true';
+      field.focus();
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(field);
+      sel.removeAllRanges(); sel.addRange(range);
+    });
+    field.addEventListener('blur', () => {
+      field.contentEditable = 'false';
+      const key = field.dataset.field;
+      const val = field.textContent.trim();
+      updateItem(data.id, { [key]: val });
+      data[key] = val;
+    });
+    field.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); field.blur(); }
+      e.stopPropagation();
+    });
+    field.addEventListener('mousedown', e => e.stopPropagation());
+  });
+
+  // 메모 저장
+  card.querySelector('.card-memo').addEventListener('blur', function() {
+    updateItem(data.id, { memo: this.value });
+  });
+
+  // 클릭 → 선택
+  card.addEventListener('mousedown', e => {
+    const tag = e.target.tagName;
+    if (tag !== 'A' && tag !== 'BUTTON' && tag !== 'TEXTAREA' && !e.target.isContentEditable)
+      selectItem(data.id);
+  });
+
+  makeDraggableFromHandle(card, card.querySelector('.card-drag-handle'), data);
+  board.appendChild(card);
+  return card;
+}
+
+// 이미지 업로드
+function triggerImgUpload(e, id) {
+  if (e.target.closest('a') || e.target.closest('button') || e.target.closest('.card-label')) return;
+  document.getElementById('file-' + id)?.click();
+}
+function handleImgFile(input, id) {
+  const file = input.files[0];
+  if (!file) return;
+  resizeToBase64(file, 800, 800, base64 => {
+    const card = document.querySelector(`[data-id="${id}"]`);
+    if (card) {
+      const wrap = card.querySelector('.card-img-wrap');
+      let img = wrap.querySelector('img');
+      if (!img) {
+        wrap.innerHTML = `<img src="" alt="" loading="lazy"><div class="img-upload-overlay">📷 이미지 변경</div>
+          <input type="file" id="file-${id}" accept="image/*" style="display:none" onchange="handleImgFile(this,'${id}')">
+          <div class="card-label" style="background:${wrap.querySelector('.card-label')?.style.background||'#6366f1'}" onclick="toggleColorPicker(event,'${id}')">
+            <div class="color-popup" id="cp-${id}">${LABEL_COLORS.map(c=>`<div class="color-dot" style="background:${c}" onclick="setCardColor(event,'${id}','${c}')"></div>`).join('')}</div>
+          </div>`;
+        img = wrap.querySelector('img');
+      }
+      img.src = base64;
+    }
+    updateItem(id, { image: base64 });
+  });
+}
+function resizeToBase64(file, maxW, maxH, cb) {
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  img.onload = () => {
+    let w = img.width, h = img.height;
+    if (w > maxW) { h = h * maxW / w; w = maxW; }
+    if (h > maxH) { w = w * maxH / h; h = maxH; }
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    c.getContext('2d').drawImage(img, 0, 0, w, h);
+    URL.revokeObjectURL(url);
+    cb(c.toDataURL('image/jpeg', 0.82));
+  };
+  img.src = url;
+}
+
+// Color picker for cards
+function toggleColorPicker(e, id) {
+  e.stopPropagation();
+  const cp = document.getElementById('cp-' + id);
+  const open = cp.classList.contains('open');
+  document.querySelectorAll('.color-popup.open').forEach(el => el.classList.remove('open'));
+  if (!open) cp.classList.add('open');
+}
+function setCardColor(e, id, color) {
+  e.stopPropagation();
+  const card = document.querySelector(`[data-id="${id}"]`);
+  if (card) card.querySelector('.card-label').style.background = color;
+  document.getElementById('cp-' + id).classList.remove('open');
+  updateItem(id, { color });
+}
+document.addEventListener('click', () => document.querySelectorAll('.color-popup.open').forEach(el => el.classList.remove('open')));
+
+// ── Text item ──
+function addTextItem() {
+  const wrap = document.getElementById('board-wrap');
+  const data = {
+    type: 'text', id: newId(),
+    x: wrap.scrollLeft + 80,
+    y: wrap.scrollTop + 80,
+    content: '텍스트를 입력하세요',
+    fontSize: 14, textColor: '#111111',
+  };
+  const tab = currentTab();
+  tab.cards.push(data);
+  saveData();
+  const el = renderText(data);
+  selectItem(data.id);
+  // 바로 편집 시작
+  setTimeout(() => startTextEdit(el, data), 50);
+  return el;
+}
+
+function renderText(data) {
+  const board = document.getElementById('board');
+  const el    = document.createElement('div');
+  el.className  = 'text-item board-item';
+  el.dataset.id = data.id;
+  el.style.left   = (data.x || 80) + 'px';
+  el.style.top    = (data.y || 80) + 'px';
+  el.style.zIndex = ++zTop;
+
+  el.innerHTML = `
+    <div class="text-drag-handle"></div>
+    <div class="text-content" style="font-size:${data.fontSize||14}px;color:${data.textColor||'#111'}">${esc(data.content||'')}</div>`;
+
+  const content = el.querySelector('.text-content');
+
+  // 더블클릭 → 편집
+  content.addEventListener('dblclick', e => { e.stopPropagation(); startTextEdit(el, data); });
+
+  // 클릭 → 선택
+  el.addEventListener('mousedown', e => {
+    if (!el.classList.contains('editing')) selectItem(data.id);
+  });
+
+  makeDraggable(el, data, '.text-drag-handle');
+  board.appendChild(el);
+  return el;
+}
+
+function startTextEdit(el, data) {
+  el.classList.add('editing');
+  const content = el.querySelector('.text-content');
+  content.contentEditable = 'true';
+  content.focus();
+  const sel = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(content);
+  sel.removeAllRanges(); sel.addRange(range);
+
+  function done() {
+    el.classList.remove('editing');
+    content.contentEditable = 'false';
+    data.content = content.textContent;
+    updateItem(data.id, { content: data.content });
+  }
+  content.addEventListener('blur', done, { once: true });
+  content.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { content.blur(); }
+    e.stopPropagation();
+  });
+}
+
+// ── Shape item ──
+const SHAPE_PRESETS = ['#e0e7ff','#fce7f3','#fef3c7','#d1fae5','#dbeafe','#fee2e2','#f3f4f6','#374151'];
+
+function addShapeItem(shapeType) {
+  const wrap = document.getElementById('board-wrap');
+  const data = {
+    type: 'shape', id: newId(), shapeType,
+    x: wrap.scrollLeft + 100, y: wrap.scrollTop + 100,
+    w: 140, h: 90,
+    fillColor: '#e0e7ff', borderColor: '#6366f1', label: '',
+  };
+  const tab = currentTab();
+  tab.cards.push(data);
+  saveData();
+  const el = renderShape(data);
+  selectItem(data.id);
+  return el;
+}
+
+function renderShape(data) {
+  const board = document.getElementById('board');
+  const el    = document.createElement('div');
+  el.className  = 'shape-item board-item';
+  el.dataset.id = data.id;
+  el.style.left         = (data.x || 100) + 'px';
+  el.style.top          = (data.y || 100) + 'px';
+  el.style.width        = (data.w || 140) + 'px';
+  el.style.height       = (data.h || 90)  + 'px';
+  el.style.background   = data.fillColor   || '#e0e7ff';
+  el.style.border       = `2px solid ${data.borderColor || '#6366f1'}`;
+  el.style.borderRadius = data.shapeType === 'circle' ? '50%' : '8px';
+  el.style.zIndex       = ++zTop;
+
+  // 색상 팝업
+  const colorDotsHtml = SHAPE_PRESETS.map(c =>
+    `<div class="color-dot" style="background:${c};border-color:${c === data.fillColor ? '#333':'transparent'}" onclick="setShapeColor(event,'${data.id}','${c}')"></div>`
+  ).join('');
+
+  el.innerHTML = `
+    <div class="shape-label" contenteditable="false">${esc(data.label||'')}</div>
+    <div class="resize-handle"></div>
+    <div class="shape-color-btn" style="background:${data.fillColor||'#e0e7ff'}" onclick="toggleShapeColorPicker(event,'${data.id}')">
+      <div class="color-popup" id="scp-${data.id}" style="top:22px;right:-4px">${colorDotsHtml}</div>
+    </div>`;
+
+  const label = el.querySelector('.shape-label');
+  label.addEventListener('dblclick', e => {
+    e.stopPropagation();
+    label.contentEditable = 'true';
+    label.focus();
+    const sel = window.getSelection(), range = document.createRange();
+    range.selectNodeContents(label); sel.removeAllRanges(); sel.addRange(range);
+  });
+  label.addEventListener('blur', () => {
+    label.contentEditable = 'false';
+    data.label = label.textContent;
+    updateItem(data.id, { label: data.label });
+  });
+  label.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); label.blur(); }
+    e.stopPropagation();
+  });
+  label.addEventListener('mousedown', e => e.stopPropagation());
+
+  el.addEventListener('mousedown', e => {
+    if (!e.target.classList.contains('resize-handle') && !e.target.isContentEditable)
+      selectItem(data.id);
+  });
+
+  makeResizable(el, data);
+  makeDraggable(el, data, null, '.resize-handle, .shape-label[contenteditable="true"]');
+  board.appendChild(el);
+  return el;
+}
+
+function toggleShapeColorPicker(e, id) {
+  e.stopPropagation();
+  const cp = document.getElementById('scp-' + id);
+  const open = cp.classList.contains('open');
+  document.querySelectorAll('.color-popup.open').forEach(el => el.classList.remove('open'));
+  if (!open) cp.classList.add('open');
+}
+function setShapeColor(e, id, color) {
+  e.stopPropagation();
+  const el = document.querySelector(`[data-id="${id}"]`);
+  if (el) {
+    el.style.background = color;
+    el.querySelector('.shape-color-btn').style.background = color;
+    // 어두운 색 → 테두리/글씨 조정
+    const dark = ['#374151','#1f2937'];
+    const border = dark.includes(color) ? '#111' : color.replace('e0','99').replace('fc','e8').replace('fe','e8').replace('d1','9e').replace('db','93').replace('fe','e8').replace('f3','d1');
+    el.style.border = `2px solid ${border}`;
+    el.querySelector('.shape-label').style.color = dark.includes(color) ? '#fff' : '#374151';
+  }
+  document.getElementById('scp-' + id).classList.remove('open');
+  updateItem(id, { fillColor: color });
+}
+
+function makeResizable(el, data) {
+  const handle = el.querySelector('.resize-handle');
+  if (!handle) return;
+  let sx, sy, ow, oh, active = false;
+  handle.addEventListener('mousedown', e => {
+    active = true; sx = e.clientX; sy = e.clientY;
+    ow = parseInt(el.style.width) || 140;
+    oh = parseInt(el.style.height) || 90;
+    e.stopPropagation(); e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!active) return;
+    const nw = Math.max(40, ow + e.clientX - sx);
+    const nh = Math.max(30, oh + e.clientY - sy);
+    el.style.width = nw + 'px'; el.style.height = nh + 'px';
+    data.w = nw; data.h = nh;
+  });
+  document.addEventListener('mouseup', () => { if (!active) return; active = false; saveData(); });
+}
+
+// ── Drag ──
+// 핸들 영역에서만 드래그 시작 (카드 전용)
+function makeDraggableFromHandle(el, handle, data) {
+  if (!handle) return;
+  let sx, sy, ox, oy, active = false;
+  handle.addEventListener('mousedown', e => {
+    active = true;
+    sx = e.clientX; sy = e.clientY;
+    ox = parseInt(el.style.left) || 0;
+    oy = parseInt(el.style.top)  || 0;
+    el.classList.add('dragging');
+    el.style.zIndex = ++zTop;
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!active) return;
+    el.style.left = Math.max(0, ox + e.clientX - sx) + 'px';
+    el.style.top  = Math.max(0, oy + e.clientY - sy) + 'px';
+  });
+  document.addEventListener('mouseup', () => {
+    if (!active) return; active = false;
+    el.classList.remove('dragging');
+    data.x = parseInt(el.style.left);
+    data.y = parseInt(el.style.top);
+    saveData();
+  });
+}
+
+function makeDraggable(el, data, ignoreSelector, alsoIgnore) {
+  let sx, sy, ox, oy, active = false;
+  el.addEventListener('mousedown', e => {
+    if (e.target.tagName === 'A' || e.target.tagName === 'BUTTON' || e.target.tagName === 'TEXTAREA') return;
+    if (e.target.isContentEditable) return;
+    if (ignoreSelector && !e.target.closest) return;
+    if (alsoIgnore && e.target.matches(alsoIgnore)) return;
+    if (alsoIgnore && e.target.closest && e.target.closest(alsoIgnore.split(',')[0])) return;
+    active = true;
+    sx = e.clientX; sy = e.clientY;
+    ox = parseInt(el.style.left) || 0;
+    oy = parseInt(el.style.top)  || 0;
+    el.classList.add('dragging');
+    el.style.zIndex = ++zTop;
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!active) return;
+    el.style.left = Math.max(0, ox + e.clientX - sx) + 'px';
+    el.style.top  = Math.max(0, oy + e.clientY - sy) + 'px';
+  });
+  document.addEventListener('mouseup', () => {
+    if (!active) return; active = false;
+    el.classList.remove('dragging');
+    data.x = parseInt(el.style.left);
+    data.y = parseInt(el.style.top);
+    saveData();
+  });
+}
+
+// ── Update ──
+function updateItem(id, patch) {
+  const item = currentItems().find(i => String(i.id) === String(id));
+  if (item) { Object.assign(item, patch); saveData(); }
+  socket.emit('item_update', { tabId: activeTabId, itemId: id, patch });
+}
+
+// ── Server status ──
+async function checkServer() {
+  const el = document.getElementById('server-status');
+  try {
+    const r = await fetch(`${SERVER}/ping`, { signal: AbortSignal.timeout(2000) });
+    el.textContent  = r.ok ? '● 서버 연결됨' : '● 서버 오류';
+    el.style.background = r.ok ? '#dcfce7' : '#fee2e2';
+    el.style.color      = r.ok ? '#16a34a' : '#ef4444';
+  } catch(e) {
+    el.textContent = '● 서버 꺼짐'; el.style.background = '#fee2e2'; el.style.color = '#ef4444';
+  }
+}
+
+// ── Fetch & parse ──
+async function fetchProduct() {
+  const input = document.getElementById('url-input');
+  const url   = input.value.trim();
+  if (!url) return;
+  const btn = document.getElementById('add-btn');
+  btn.disabled = true; setLoading(true);
+  try {
+    const r    = await fetch(`${SERVER}/scrape?url=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(30000) });
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    if (!data.image) { openModal(url, true); return; }
+    data.url = url;
+    const card = addCard(data);
+    input.value = '';
+    toast('✅ 상품이 추가되었습니다');
+    scrollToEl(card);
+  } catch(err) {
+    const isConn = err.name === 'TypeError' || err.message.includes('Failed');
+    isConn ? toast('❌ 서버에 연결할 수 없습니다. 실행.bat을 실행해주세요.') : openModal(url, true);
+  } finally { btn.disabled = false; setLoading(false); }
+}
+
+// ── Modal (이미지 파일 업로드 포함) ──
+function openModal(url, warn) {
+  ['m-name','m-price','m-material','m-image','m-memo'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('m-url').value = url || '';
+  document.getElementById('modal-warn').classList.toggle('show', !!warn);
+  document.getElementById('m-image-preview').style.display = 'none';
+  imageBase64 = null;
+  document.getElementById('modal-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('m-name').focus(), 100);
+}
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('open');
+  imageBase64 = null;
+}
+function onImageUrlInput() {
+  const url = document.getElementById('m-image').value.trim();
+  const preview = document.getElementById('m-image-preview');
+  if (url) { preview.src = url; preview.style.display = 'block'; imageBase64 = null; }
+  else { preview.style.display = 'none'; }
+}
+function onImageFileSelect(input) {
+  const file = input.files[0];
+  if (!file) return;
+  resizeToBase64(file, 800, 800, base64 => {
+    imageBase64 = base64;
+    const preview = document.getElementById('m-image-preview');
+    preview.src = base64; preview.style.display = 'block';
+    document.getElementById('m-image').value = '';
+  });
+}
+function submitManual() {
+  const data = {
+    name:     document.getElementById('m-name').value.trim(),
+    price:    document.getElementById('m-price').value.trim(),
+    material: document.getElementById('m-material').value.trim(),
+    image:    imageBase64 || document.getElementById('m-image').value.trim(),
+    url:      document.getElementById('m-url').value.trim(),
+    memo:     document.getElementById('m-memo').value.trim(),
+  };
+  if (!data.name && !data.image) { alert('상품명 또는 이미지를 입력해주세요.'); return; }
+  const card = addCard(data);
+  closeModal();
+  toast('✅ 상품이 추가되었습니다');
+  scrollToEl(card);
+  setLoading(false);
+  document.getElementById('add-btn').disabled = false;
+  document.getElementById('url-input').value = '';
+}
+document.getElementById('modal-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal-overlay')) closeModal();
+});
+
+// ── Board clear ──
+function clearBoard() {
+  const tab = currentTab();
+  if (!tab) return;
+  if (!confirm(`"${tab.name}" 탭의 항목 ${tab.cards.length}개를 모두 삭제할까요?`)) return;
+  document.getElementById('board').innerHTML = '';
+  tab.cards = []; saveData();
+  socket.emit('tab_clear', { tabId: activeTabId });
+  toast('🗑️ 탭이 비워졌습니다');
+}
+
+// ── Helpers ──
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function setLoading(v) { document.getElementById('loading').classList.toggle('active', v); }
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
+}
+function scrollToEl(el) {
+  const wrap = document.getElementById('board-wrap');
+  wrap.scrollTo({ left: Math.max(0, parseInt(el.style.left) - 60), top: Math.max(0, parseInt(el.style.top) - 60), behavior: 'smooth' });
+}
+</script>
+</body>
+</html>

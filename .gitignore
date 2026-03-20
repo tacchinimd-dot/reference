@@ -1,0 +1,5 @@
+board_state.json
+레퍼런스_백업.xlsx
+__pycache__/
+*.pyc
+server_log.txt
