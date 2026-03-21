@@ -318,7 +318,7 @@ def start(open_browser=False):
         print(f"  같은 네트워크 팀원:  http://{host_ip}:{port}")
         print("  종료하려면 Ctrl+C 또는 창을 닫으세요")
         print("=" * 54)
-    socketio.run(app, host="0.0.0.0", port=port, debug=False)
+    socketio.run(app, host="0.0.0.0", port=port, debug=False, allow_unsafe_werkzeug=True)
 
 if __name__ == "__main__":
     start(open_browser=True)
