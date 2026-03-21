@@ -3,9 +3,6 @@
 실행: python launch.py
 """
 
-import eventlet
-eventlet.monkey_patch()
-
 import os, json, time, threading
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory
@@ -17,7 +14,7 @@ from openpyxl.styles import Font, PatternFill, Alignment
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 HTML_FILE  = "product_reference_board.html"
