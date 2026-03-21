@@ -10,8 +10,11 @@ import io
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from playwright.sync_api import sync_playwright
+import base64 as b64lib
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.drawing.image import Image as XLImage
+from PIL import Image as PILImage
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -65,32 +68,113 @@ def export_xlsx():
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "레퍼런스"
-        headers = ["탭", "상품명", "가격", "소재", "URL"]
-        header_fill = PatternFill(start_color="6366f1", end_color="6366f1", fill_type="solid")
-        header_font = Font(color="FFFFFF", bold=True)
-        for col, h in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col, value=h)
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-        for w, c in zip([15, 30, 15, 20, 40], "ABCDE"):
-            ws.column_dimensions[c].width = w
-        row = 2
+
+        ws.column_dimensions["A"].width = 20   # 이미지
+        ws.column_dimensions["B"].width = 10   # 라벨
+        ws.column_dimensions["C"].width = 40   # 값
+
+        thin       = Side(style="thin", color="E5E7EB")
+        card_border = Border(top=thin, bottom=thin, left=thin, right=thin)
+        label_fill  = PatternFill(start_color="F3F4F6", end_color="F3F4F6", fill_type="solid")
+        tab_fill    = PatternFill(start_color="6366F1", end_color="6366F1", fill_type="solid")
+
+        CARD_ROWS    = 4
+        ROW_HEIGHT   = 28
+        IMG_W, IMG_H = 120, 100
+
+        row = 1
         with _state_lock:
             tabs = board_state.get("tabs", [])
+
         for tab in tabs:
-            for card in tab.get("cards", []):
-                ws.append([tab.get("name", ""), card.get("name", ""), card.get("price", ""), card.get("material", ""), card.get("url", "")])
-                if card.get("url"):
-                    cell = ws.cell(row=row, column=5)
-                    cell.hyperlink = card.get("url")
-                    cell.font = Font(color="6366f1", underline="single")
+            cards = [c for c in tab.get("cards", []) if (c.get("type") or "card") == "card"]
+            if not cards:
+                continue
+
+            # 탭 헤더
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
+            hdr = ws.cell(row=row, column=1, value=f"  {tab.get('name','')}")
+            hdr.font      = Font(bold=True, color="FFFFFF", size=12)
+            hdr.fill      = tab_fill
+            hdr.alignment = Alignment(vertical="center")
+            ws.row_dimensions[row].height = 28
+            row += 1
+
+            for card in cards:
+                start = row
+
+                # 행 높이 설정
+                for r in range(CARD_ROWS):
+                    ws.row_dimensions[start + r].height = ROW_HEIGHT
+
+                # 이미지 셀 (세로 병합)
+                ws.merge_cells(start_row=start, start_column=1,
+                               end_row=start + CARD_ROWS - 1, end_column=1)
+                img_cell = ws.cell(row=start, column=1)
+                img_cell.alignment = Alignment(horizontal="center", vertical="center")
+                img_cell.border    = card_border
+
+                # 이미지 임베딩
+                image_val = card.get("image", "")
+                if image_val and image_val.startswith("data:image"):
+                    try:
+                        raw = b64lib.b64decode(image_val.split(",", 1)[1])
+                        pil = PILImage.open(io.BytesIO(raw))
+                        if pil.mode not in ("RGB", "RGBA"):
+                            pil = pil.convert("RGBA")
+                        out = io.BytesIO()
+                        pil.save(out, format="PNG")
+                        out.seek(0)
+                        xl_img        = XLImage(out)
+                        xl_img.width  = IMG_W
+                        xl_img.height = IMG_H
+                        ws.add_image(xl_img, f"A{start}")
+                    except Exception:
+                        img_cell.value = "🖼️"
+                else:
+                    img_cell.value = "—"
+
+                # 상세 정보 (4행)
+                details = [
+                    ("상품명", card.get("name", ""),     False),
+                    ("가격",   card.get("price", ""),    False),
+                    ("소재",   card.get("material", ""), False),
+                    ("URL",    card.get("url", ""),      True),
+                ]
+                for i, (label, value, is_url) in enumerate(details):
+                    r = start + i
+
+                    lbl = ws.cell(row=r, column=2, value=label)
+                    lbl.font      = Font(bold=True, size=10, color="6B7280")
+                    lbl.fill      = label_fill
+                    lbl.alignment = Alignment(horizontal="center", vertical="center")
+                    lbl.border    = card_border
+
+                    val = ws.cell(row=r, column=3, value=value)
+                    val.alignment = Alignment(vertical="center", wrap_text=True)
+                    val.border    = card_border
+                    if is_url and value:
+                        val.hyperlink = value
+                        val.font = Font(size=11, color="6366F1", underline="single")
+                    else:
+                        val.font = Font(size=11)
+
+                row += CARD_ROWS
+
+                # 카드 사이 구분선
+                ws.row_dimensions[row].height = 6
                 row += 1
+
+            # 탭 사이 여백
+            ws.row_dimensions[row].height = 14
+            row += 1
+
         buf = io.BytesIO()
         wb.save(buf)
         buf.seek(0)
-        filename = f"레퍼런스_백업_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        return send_file(buf, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", as_attachment=True, download_name=filename)
+        filename = f"레퍼런스_카드_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        return send_file(buf, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                         as_attachment=True, download_name=filename)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
