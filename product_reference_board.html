@@ -247,7 +247,7 @@
     <div class="field"><label>가격</label><input type="text" id="m-price" placeholder="예: $128 / ₩152,000"></div>
     <div class="field"><label>소재</label><input type="text" id="m-material" placeholder="예: 85% Polyester, 15% Spandex"></div>
     <div class="field">
-      <label>이미지</label>
+      <label>이미지 <span style="color:#9ca3af;font-weight:400;font-size:11px">— URL 입력, 파일 선택, 또는 Ctrl+V로 붙여넣기</span></label>
       <div class="img-upload-field">
         <input type="text" id="m-image" placeholder="이미지 URL (선택)" oninput="onImageUrlInput()">
         <label class="img-file-btn">파일 선택<input type="file" id="m-image-file" accept="image/*" style="display:none" onchange="onImageFileSelect(this)"></label>
@@ -419,6 +419,51 @@ window.addEventListener('load', () => {
 
   // 키보드 단축키
   document.addEventListener('keydown', onKeyDown);
+
+  // 클립보드 이미지 붙여넣기
+  document.addEventListener('paste', function(e) {
+    const items = (e.clipboardData || e.originalEvent?.clipboardData)?.items;
+    if (!items) return;
+    const imageItem = Array.from(items).find(item => item.type.startsWith('image/'));
+    if (!imageItem) return;
+    const file = imageItem.getAsFile();
+    if (!file) return;
+
+    const modalOpen = document.getElementById('modal-overlay').classList.contains('open');
+    if (modalOpen) {
+      e.preventDefault();
+      resizeToBase64(file, 800, 800, base64 => {
+        imageBase64 = base64;
+        const preview = document.getElementById('m-image-preview');
+        preview.src = base64; preview.style.display = 'block';
+        document.getElementById('m-image').value = '';
+        toast('이미지 붙여넣기 완료');
+      });
+    } else if (selectedId) {
+      const item = currentItems().find(i => String(i.id) === String(selectedId));
+      if (item && (item.type === 'card' || !item.type)) {
+        e.preventDefault();
+        resizeToBase64(file, 800, 800, base64 => {
+          const card = document.querySelector(`[data-id="${selectedId}"]`);
+          if (!card) return;
+          const wrap = card.querySelector('.card-img-wrap');
+          let img = wrap.querySelector('img');
+          if (!img) {
+            const id = selectedId;
+            wrap.innerHTML = `<img src="" alt="" loading="lazy"><div class="img-upload-overlay">📷 클릭하여 변경 · Ctrl+V 붙여넣기</div>
+              <input type="file" id="file-${id}" accept="image/*" style="display:none" onchange="handleImgFile(this,'${id}')">
+              <div class="card-label" style="background:${wrap.querySelector('.card-label')?.style.background||'#6366f1'}" onclick="toggleColorPicker(event,'${id}')">
+                <div class="color-popup" id="cp-${id}">${LABEL_COLORS.map(c=>`<div class="color-dot" style="background:${c}" onclick="setCardColor(event,'${id}','${c}')"></div>`).join('')}</div>
+              </div>`;
+            img = wrap.querySelector('img');
+          }
+          img.src = base64;
+          updateItem(selectedId, { image: base64 });
+          toast('이미지 붙여넣기 완료');
+        });
+      }
+    }
+  });
 
   checkServer();
   setInterval(checkServer, 10000);
@@ -626,7 +671,7 @@ function renderCard(data) {
     <div class="card-drag-handle"></div>
     <div class="card-img-wrap" onclick="triggerImgUpload(event,'${data.id}')">
       ${imgHtml}
-      <div class="img-upload-overlay">📷 이미지 변경</div>
+      <div class="img-upload-overlay">📷 클릭하여 변경 · Ctrl+V 붙여넣기</div>
       <input type="file" id="file-${data.id}" accept="image/*" style="display:none" onchange="handleImgFile(this,'${data.id}')">
       <div class="card-label" style="background:${esc(data.color||'#6366f1')}" onclick="toggleColorPicker(event,'${data.id}')">
         <div class="color-popup" id="cp-${data.id}">${dotsHtml}</div>
