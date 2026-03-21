@@ -5,7 +5,8 @@
 
 import os, json, time, threading
 from datetime import datetime
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, send_file
+import io
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from playwright.sync_api import sync_playwright
@@ -55,6 +56,41 @@ def backup():
     try:
         save_to_xlsx(request.get_json())
         return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/export", methods=["GET"])
+def export_xlsx():
+    try:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "레퍼런스"
+        headers = ["탭", "상품명", "가격", "소재", "URL"]
+        header_fill = PatternFill(start_color="6366f1", end_color="6366f1", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True)
+        for col, h in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=h)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        for w, c in zip([15, 30, 15, 20, 40], "ABCDE"):
+            ws.column_dimensions[c].width = w
+        row = 2
+        with _state_lock:
+            tabs = board_state.get("tabs", [])
+        for tab in tabs:
+            for card in tab.get("cards", []):
+                ws.append([tab.get("name", ""), card.get("name", ""), card.get("price", ""), card.get("material", ""), card.get("url", "")])
+                if card.get("url"):
+                    cell = ws.cell(row=row, column=5)
+                    cell.hyperlink = card.get("url")
+                    cell.font = Font(color="6366f1", underline="single")
+                row += 1
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        filename = f"레퍼런스_백업_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        return send_file(buf, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", as_attachment=True, download_name=filename)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
