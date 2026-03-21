@@ -37,7 +37,9 @@
     #add-btn    { background: #6366f1; color: #fff; }
     #manual-btn { background: #f3f4f6; color: #374151; }
     #text-btn   { background: #f3f4f6; color: #374151; font-weight: 700; }
-    #rect-btn, #circle-btn { background: #f3f4f6; color: #374151; font-size: 15px; padding: 6px 10px; }
+    #shape-btn { background: #f3f4f6; color: #374151; }
+    .shape-menu-item { padding: 8px 16px; cursor: pointer; font-size: 13px; color: #374151; white-space: nowrap; }
+    .shape-menu-item:hover { background: #f3f4f6; }
     #clear-btn  { background: #fef2f2; color: #ef4444; }
 
     /* ── Tab bar ── */
@@ -207,8 +209,15 @@
   <div class="tb-sep"></div>
   <button id="manual-btn" class="tb-btn" onclick="openModal(null)" title="URL 없이 상품 직접 입력">상품 카드</button>
   <button id="text-btn"   class="tb-btn" onclick="addTextItem()" title="텍스트 추가">T 텍스트</button>
-  <button id="rect-btn"   class="tb-btn" onclick="addShapeItem('rect')"   title="사각형 추가">□</button>
-  <button id="circle-btn" class="tb-btn" onclick="addShapeItem('circle')" title="원 추가">○</button>
+  <div style="position:relative;display:inline-block">
+    <button id="shape-btn" class="tb-btn" onclick="toggleShapeMenu(event)" title="도형 추가">도형 ▾</button>
+    <div id="shape-menu" style="display:none;position:absolute;top:calc(100% + 6px);left:0;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:2000;min-width:110px;padding:4px 0;">
+      <div class="shape-menu-item" onclick="selectShape('line')">— 직선</div>
+      <div class="shape-menu-item" onclick="selectShape('curve')">∿ 곡선</div>
+      <div class="shape-menu-item" onclick="selectShape('rect')">□ 사각형</div>
+      <div class="shape-menu-item" onclick="selectShape('circle')">○ 원형</div>
+    </div>
+  </div>
   <div class="tb-sep"></div>
   <button class="tb-btn" onclick="location.href='/export'" title="전체 데이터를 엑셀로 다운로드" style="background:#dcfce7;color:#16a34a;">⬇ 엑셀 저장</button>
   <div class="tb-sep"></div>
@@ -808,12 +817,29 @@ function startTextEdit(el, data) {
 // ── Shape item ──
 const SHAPE_PRESETS = ['#e0e7ff','#fce7f3','#fef3c7','#d1fae5','#dbeafe','#fee2e2','#f3f4f6','#374151'];
 
+function toggleShapeMenu(e) {
+  e.stopPropagation();
+  const menu = document.getElementById('shape-menu');
+  menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+}
+function selectShape(type) {
+  document.getElementById('shape-menu').style.display = 'none';
+  addShapeItem(type);
+}
+document.addEventListener('click', () => {
+  const menu = document.getElementById('shape-menu');
+  if (menu) menu.style.display = 'none';
+});
+
 function addShapeItem(shapeType) {
   const wrap = document.getElementById('board-wrap');
+  const isLine  = shapeType === 'line';
+  const isCurve = shapeType === 'curve';
   const data = {
     type: 'shape', id: newId(), shapeType,
     x: wrap.scrollLeft + 100, y: wrap.scrollTop + 100,
-    w: 140, h: 90,
+    w: (isLine || isCurve) ? 200 : 140,
+    h: isLine ? 6 : isCurve ? 80 : 90,
     fillColor: '#e0e7ff', borderColor: '#6366f1', label: '',
   };
   const tab = currentTab();
@@ -833,22 +859,43 @@ function renderShape(data) {
   el.style.top          = (data.y || 100) + 'px';
   el.style.width        = (data.w || 140) + 'px';
   el.style.height       = (data.h || 90)  + 'px';
-  el.style.background   = data.fillColor   || '#e0e7ff';
-  el.style.border       = `2px solid ${data.borderColor || '#6366f1'}`;
-  el.style.borderRadius = data.shapeType === 'circle' ? '50%' : '8px';
-  el.style.zIndex       = ++zTop;
+  const isLine  = data.shapeType === 'line';
+  const isCurve = data.shapeType === 'curve';
+  const strokeColor = data.borderColor || '#6366f1';
 
-  // 색상 팝업
+  if (isLine || isCurve) {
+    el.style.background = 'transparent';
+    el.style.border = 'none';
+    el.style.overflow = 'visible';
+  } else {
+    el.style.background   = data.fillColor   || '#e0e7ff';
+    el.style.border       = `2px solid ${strokeColor}`;
+    el.style.borderRadius = data.shapeType === 'circle' ? '50%' : '8px';
+  }
+  el.style.zIndex = ++zTop;
+
+  // 색상 팝업 (사각형·원형 전용)
   const colorDotsHtml = SHAPE_PRESETS.map(c =>
     `<div class="color-dot" style="background:${c};border-color:${c === data.fillColor ? '#333':'transparent'}" onclick="setShapeColor(event,'${data.id}','${c}')"></div>`
   ).join('');
 
+  const svgHtml = isLine
+    ? `<svg width="100%" height="100%" viewBox="0 0 100 10" preserveAspectRatio="none" style="position:absolute;top:0;left:0;overflow:visible">
+        <line x1="0" y1="5" x2="100" y2="5" stroke="${strokeColor}" stroke-width="3" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+       </svg>`
+    : isCurve
+    ? `<svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;top:0;left:0;overflow:visible">
+        <path d="M 0 100 Q 50 0 100 100" stroke="${strokeColor}" stroke-width="3" fill="none" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+       </svg>`
+    : '';
+
   el.innerHTML = `
+    ${svgHtml}
     <div class="shape-label" contenteditable="false">${esc(data.label||'')}</div>
     <div class="resize-handle"></div>
-    <div class="shape-color-btn" style="background:${data.fillColor||'#e0e7ff'}" onclick="toggleShapeColorPicker(event,'${data.id}')">
+    ${!isLine && !isCurve ? `<div class="shape-color-btn" style="background:${data.fillColor||'#e0e7ff'}" onclick="toggleShapeColorPicker(event,'${data.id}')">
       <div class="color-popup" id="scp-${data.id}" style="top:22px;right:-4px">${colorDotsHtml}</div>
-    </div>`;
+    </div>` : ''}`;
 
   const label = el.querySelector('.shape-label');
   label.addEventListener('dblclick', e => {
