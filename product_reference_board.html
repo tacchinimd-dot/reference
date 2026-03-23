@@ -75,9 +75,9 @@
 
     /* ── Product Card ── */
     .product-card {
-      position: absolute; width: 230px; background: #fff; border-radius: 12px;
+      position: absolute; width: 230px; height: 390px; background: #fff; border-radius: 12px;
       box-shadow: 0 2px 10px rgba(0,0,0,0.12); cursor: grab; user-select: none;
-      overflow: hidden; transition: box-shadow 0.2s;
+      overflow: hidden; transition: box-shadow 0.2s; display: flex; flex-direction: column;
     }
     .product-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.18); }
     .product-card.dragging { box-shadow: 0 10px 32px rgba(0,0,0,0.22); cursor: grabbing; z-index: 9999 !important; }
@@ -88,7 +88,7 @@
     .card-drag-handle:hover { background: #f3f4f6; }
     .card-drag-handle::before { content: '⋯'; color: #d1d5db; font-size: 13px; letter-spacing: 3px; }
     .product-card.dragging .card-drag-handle { cursor: grabbing; }
-    .card-img-wrap { width: 100%; height: 210px; background: #f3f4f6; overflow: hidden; position: relative; cursor: pointer; }
+    .card-img-wrap { width: 100%; height: 200px; flex-shrink: 0; background: #f3f4f6; overflow: hidden; position: relative; cursor: pointer; }
     .card-img-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.3s; }
     .product-card:hover .card-img-wrap img { transform: scale(1.03); }
     .img-upload-overlay {
@@ -100,7 +100,7 @@
     .no-image { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 12px; flex-direction: column; gap: 6px; }
     .no-image-icon { font-size: 28px; }
     .card-label { position: absolute; top: 8px; right: 8px; width: 16px; height: 16px; border-radius: 50%; cursor: pointer; border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.3); z-index: 2; }
-    .card-body { padding: 10px 12px 6px; }
+    .card-body { padding: 10px 12px 6px; flex: 1; overflow: hidden; }
     .card-field {
       font-size: 13px; font-weight: 600; color: #111; line-height: 1.35; margin-bottom: 5px;
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
@@ -112,8 +112,8 @@
     .card-field:empty:before { content: attr(data-placeholder); color: #d1d5db; font-weight: 400; }
     .card-source a { font-size: 10px; color: #9ca3af; text-decoration: none; }
     .card-source a:hover { color: #6366f1; text-decoration: underline; }
-    .card-footer { display: flex; align-items: flex-end; gap: 4px; padding: 4px 10px 8px; border-top: 1px solid #f3f4f6; margin-top: 6px; }
-    .card-memo { flex: 1; border: none; resize: none; font-size: 11px; color: #374151; background: transparent; outline: none; font-family: inherit; height: 36px; line-height: 1.4; }
+    .card-footer { display: flex; align-items: flex-end; gap: 4px; padding: 4px 10px 6px; border-top: 1px solid #f3f4f6; flex-shrink: 0; }
+    .card-memo { flex: 1; border: none; resize: none; font-size: 11px; color: #374151; background: transparent; outline: none; font-family: inherit; height: 30px; line-height: 1.4; }
     .card-memo::placeholder { color: #d1d5db; }
     .card-del { background: none; border: none; cursor: pointer; color: #d1d5db; font-size: 18px; padding: 0 2px; line-height: 1; flex-shrink: 0; transition: color 0.15s; }
     .card-del:hover { color: #ef4444; }
@@ -486,6 +486,8 @@ let clipboard   = null;   // 복사된 아이템 (인앱 클립보드)
 let imageBase64 = null;   // 모달에서 업로드한 이미지 base64
 let historyStack = [];    // Ctrl+Z 히스토리
 const MAX_HISTORY = 30;
+const CARD_W = 230, CARD_H = 390, SLOT_GAP = 12;
+const SLOT_W = CARD_W + SLOT_GAP, SLOT_H = CARD_H + SLOT_GAP;
 
 // ── Init ──
 window.addEventListener('load', () => {
@@ -616,6 +618,38 @@ function saveData() { localStorage.setItem(STORE_KEY, JSON.stringify({ tabs, act
 function currentTab()   { return tabs.find(t => t.id === activeTabId); }
 function currentItems() { return currentTab()?.cards || []; }
 function newId()        { return 'i' + Date.now() + Math.random().toString(36).slice(2, 5); }
+
+function slotPos(col, row) { return { x: SLOT_GAP + col * SLOT_W, y: SLOT_GAP + row * SLOT_H }; }
+function posToSlot(x, y)   { return { col: Math.max(0, Math.round((x - SLOT_GAP) / SLOT_W)), row: Math.max(0, Math.round((y - SLOT_GAP) / SLOT_H)) }; }
+function occupiedSlots(catId, excludeId) {
+  return new Set(
+    currentItems()
+      .filter(i => (i.type||'card') === 'card' && i.categoryId === catId && String(i.id) !== String(excludeId||''))
+      .map(c => `${Math.round((c.x - SLOT_GAP) / SLOT_W)},${Math.round((c.y - SLOT_GAP) / SLOT_H)}`)
+  );
+}
+function nextEmptySlot(catId, excludeId) {
+  const occ = occupiedSlots(catId, excludeId);
+  for (let r = 0; r < 50; r++)
+    for (let c = 0; c < 20; c++)
+      if (!occ.has(`${c},${r}`)) return slotPos(c, r);
+  return slotPos(0, 0);
+}
+function nearestEmptySlot(catId, x, y, excludeId) {
+  const { col: pc, row: pr } = posToSlot(x, y);
+  const occ = occupiedSlots(catId, excludeId);
+  if (!occ.has(`${pc},${pr}`)) return slotPos(pc, pr);
+  for (let rad = 1; rad <= 20; rad++) {
+    for (let dc = -rad; dc <= rad; dc++) {
+      for (let dr = -rad; dr <= rad; dr++) {
+        if (Math.abs(dc) !== rad && Math.abs(dr) !== rad) continue;
+        const c = pc + dc, r = pr + dr;
+        if (c >= 0 && r >= 0 && !occ.has(`${c},${r}`)) return slotPos(c, r);
+      }
+    }
+  }
+  return slotPos(pc, pr);
+}
 
 function pushHistory() {
   historyStack.push(JSON.parse(JSON.stringify({ tabs, activeTabId })));
@@ -777,12 +811,10 @@ function addCard(data, skipBackup) {
   const cat = ensureUnclassifiedCategory();
   data.categoryId = data.categoryId || cat.id;
 
-  // Position relative to the category content area
+  // Position relative to the category content area (slot-based)
   if (data.x == null) {
-    const cardsInCat = items.filter(i => (i.type||'card') === 'card' && i.categoryId === data.categoryId);
-    const n = cardsInCat.length;
-    data.x = 10 + (n % 3) * 250;
-    data.y = 10 + Math.floor(n / 3) * 380;
+    const pos = nextEmptySlot(data.categoryId, data.id);
+    data.x = pos.x; data.y = pos.y;
   }
   items.push(data);
   saveData();
@@ -835,14 +867,28 @@ function renderCategory(data) {
   el.style.zIndex = ++zTop;
 
   el.innerHTML = `
-    <div class="category-name-strip" contenteditable="true" spellcheck="false">${esc(data.name||'카테고리')}</div>
+    <div class="category-name-strip" contenteditable="false" spellcheck="false">${esc(data.name||'카테고리')}</div>
     <div class="category-content" data-cat-id="${data.id}"></div>
     <div class="category-resize-handle"></div>`;
 
   const strip = el.querySelector('.category-name-strip');
 
-  // Double-click to edit name (contenteditable already; focus on click)
+  // Double-click to edit name
+  let isEditingName = false;
+  strip.addEventListener('dblclick', e => {
+    e.stopPropagation();
+    isEditingName = true;
+    strip.contentEditable = 'true';
+    strip.focus();
+    const range = document.createRange();
+    range.selectNodeContents(strip);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  });
   strip.addEventListener('blur', () => {
+    isEditingName = false;
+    strip.contentEditable = 'false';
     const newName = strip.textContent.trim() || data.name;
     if (newName !== data.name) {
       data.name = newName;
@@ -863,8 +909,7 @@ function renderCategory(data) {
   // Drag via strip (only when strip is not actively being edited/focused for text)
   let catDragActive = false, catSx, catSy, catOx, catOy;
   strip.addEventListener('mousedown', e => {
-    // Allow text cursor if already focused (editing mode)
-    if (document.activeElement === strip) return;
+    if (isEditingName) return; // editing mode — don't drag
     pushHistory();
     catDragActive = true;
     catSx = e.clientX; catSy = e.clientY;
@@ -948,11 +993,9 @@ function moveCardToCategory(cardId, catId) {
   const oldCatId = cardData.categoryId;
   cardData.categoryId = catId;
 
-  // Position: next slot within the new category
-  const cardsInNewCat = items.filter(i => (i.type||'card') === 'card' && i.categoryId === catId && String(i.id) !== String(cardId));
-  const n = cardsInNewCat.length;
-  cardData.x = 10 + (n % 3) * 250;
-  cardData.y = 10 + Math.floor(n / 3) * 380;
+  // Position: next empty slot within the new category
+  const pos = nextEmptySlot(catId, cardId);
+  cardData.x = pos.x; cardData.y = pos.y;
 
   saveData();
   socket.emit('item_update', { tabId: activeTabId, itemId: cardId, patch: { categoryId: catId, x: cardData.x, y: cardData.y } });
@@ -1381,20 +1424,13 @@ function makeDraggableFromHandle(el, handle, data) {
   document.addEventListener('mouseup', () => {
     if (!active) return; active = false;
     el.classList.remove('dragging');
-    // Constrain within category content area if card belongs to one
+    // Snap to nearest empty slot within category, no overlap
     if (data.categoryId) {
-      const catData = currentItems().find(i => String(i.id) === String(data.categoryId) && i.type === 'category');
-      if (catData) {
-        const contentW = (catData.w || 900) - 120;
-        const contentH = catData.h || 350;
-        const cardW = el.offsetWidth  || 230;
-        const cardH = el.offsetHeight || 300;
-        const cx = Math.min(Math.max(0, parseInt(el.style.left)), contentW - cardW);
-        const cy = Math.min(Math.max(0, parseInt(el.style.top)),  contentH - cardH);
-        el.style.left = cx + 'px';
-        el.style.top  = cy + 'px';
-        data.x = cx; data.y = cy;
-      }
+      const rawX = parseInt(el.style.left), rawY = parseInt(el.style.top);
+      const snap = nearestEmptySlot(data.categoryId, rawX, rawY, data.id);
+      el.style.left = snap.x + 'px';
+      el.style.top  = snap.y + 'px';
+      data.x = snap.x; data.y = snap.y;
     } else {
       data.x = parseInt(el.style.left);
       data.y = parseInt(el.style.top);
