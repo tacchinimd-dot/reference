@@ -196,6 +196,85 @@
     .btn-ok { background: #6366f1; color: white; }
     .btn-ok:hover { background: #4f46e5; }
     .btn-cancel { background: #f3f4f6; color: #374151; }
+
+    /* ── Category Card ── */
+    .category-card {
+      position: absolute;
+      background: #f8f9ff;
+      border: 2px solid #a5b4fc;
+      border-radius: 12px;
+      display: flex;
+      min-width: 600px;
+      min-height: 300px;
+      overflow: hidden;
+      box-shadow: 0 2px 12px rgba(99,102,241,0.1);
+    }
+    .category-card.selected { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.25); }
+    .category-name-strip {
+      width: 120px;
+      min-width: 120px;
+      background: #6366f1;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px 8px;
+      cursor: grab;
+      writing-mode: vertical-rl;
+      text-orientation: mixed;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      outline: none;
+    }
+    .category-name-strip:focus { background: #4f46e5; }
+    .category-content {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      min-height: 300px;
+    }
+    .category-resize-handle {
+      position: absolute;
+      bottom: 4px;
+      right: 4px;
+      width: 16px;
+      height: 16px;
+      cursor: se-resize;
+      background: linear-gradient(135deg, transparent 50%, #a5b4fc 50%);
+      border-radius: 0 0 4px 0;
+      z-index: 2;
+    }
+    .cat-selector-btn {
+      display: block;
+      width: 100%;
+      padding: 4px 8px;
+      margin-top: 6px;
+      border: 1px dashed #d1d5db;
+      border-radius: 6px;
+      background: #f9fafb;
+      color: #6b7280;
+      font-size: 11px;
+      cursor: pointer;
+      text-align: left;
+    }
+    .cat-selector-btn:hover { border-color: #6366f1; color: #6366f1; }
+    .cat-dropdown {
+      position: absolute;
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+      z-index: 9000;
+      min-width: 150px;
+      padding: 4px 0;
+    }
+    .cat-dropdown-item {
+      padding: 7px 14px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .cat-dropdown-item:hover { background: #f3f4f6; }
   </style>
 </head>
 <body>
@@ -218,6 +297,7 @@
       <div class="shape-menu-item" onclick="selectShape('circle')">○ 원형</div>
     </div>
   </div>
+  <button id="category-btn" class="tb-btn" onclick="addCategoryCard()" title="카테고리 추가" style="background:#ede9fe;color:#6366f1;">📂 카테고리</button>
   <div class="tb-sep"></div>
   <button class="tb-btn" onclick="location.href='/export'" title="전체 데이터를 엑셀로 다운로드" style="background:#dcfce7;color:#16a34a;">⬇ 엑셀 저장</button>
   <div class="tb-sep"></div>
@@ -332,6 +412,7 @@ function remoteItemAdd(tabId, item) {
     saveData();
     if (tabId === activeTabId) {
       const type = item.type || 'card';
+      if (type === 'category') renderCategory(item);
       if (type === 'card')  renderCard(item);
       if (type === 'text')  renderText(item);
       if (type === 'shape') renderShape(item);
@@ -357,6 +438,7 @@ function remoteItemUpdate(tabId, itemId, patch) {
     if (contentKeys.some(k => patch[k] != null)) {
       el.remove();
       const type = item.type || 'card';
+      if (type === 'category') renderCategory(item);
       if (type === 'card')  renderCard(item);
       if (type === 'text')  renderText(item);
       if (type === 'shape') renderShape(item);
@@ -611,7 +693,10 @@ function startRenameTab(el, tab) {
 // ── Board render ──
 function renderBoard() {
   document.getElementById('board').innerHTML = '';
-  currentItems().forEach(item => {
+  const items = currentItems();
+  // Render categories first so product cards can be placed inside them
+  items.forEach(item => { if (item.type === 'category') renderCategory(item); });
+  items.forEach(item => {
     const type = item.type || 'card';
     if (type === 'card')  renderCard(item);
     if (type === 'text')  renderText(item);
@@ -656,6 +741,7 @@ function addItem(data, skipHistory) {
   socket.emit('item_add', { tabId: activeTabId, item: data });
   const type = data.type || 'card';
   let el;
+  if (type === 'category') el = renderCategory(data);
   if (type === 'card')  el = renderCard(data);
   if (type === 'text')  el = renderText(data);
   if (type === 'shape') el = renderShape(data);
@@ -663,6 +749,22 @@ function addItem(data, skipHistory) {
 }
 
 // ── Product Card ──
+function ensureUnclassifiedCategory() {
+  const items = currentItems();
+  let cat = items.find(i => i.type === 'category' && i.name === '카테고리 미분류');
+  if (!cat) {
+    cat = {
+      type: 'category', id: newId(), name: '카테고리 미분류',
+      x: 20, y: 80, w: 900, h: 350
+    };
+    items.push(cat);
+    saveData();
+    socket.emit('item_add', { tabId: activeTabId, item: cat });
+    renderCategory(cat);
+  }
+  return cat;
+}
+
 function addCard(data, skipBackup) {
   pushHistory();
   const items = currentItems();
@@ -670,10 +772,17 @@ function addCard(data, skipBackup) {
   data.id    = data.id    || newId();
   data.color = data.color || LABEL_COLORS[colIdx % LABEL_COLORS.length];
   colIdx++;
+
+  // Auto-assign to "카테고리 미분류"
+  const cat = ensureUnclassifiedCategory();
+  data.categoryId = data.categoryId || cat.id;
+
+  // Position relative to the category content area
   if (data.x == null) {
-    const wrap = document.getElementById('board-wrap');
-    data.x = wrap.scrollLeft + 40 + (items.filter(i => (i.type||'card') === 'card').length % 5) * 250;
-    data.y = wrap.scrollTop  + 40 + Math.floor(items.filter(i => (i.type||'card') === 'card').length / 5) * 380;
+    const cardsInCat = items.filter(i => (i.type||'card') === 'card' && i.categoryId === data.categoryId);
+    const n = cardsInCat.length;
+    data.x = 10 + (n % 3) * 250;
+    data.y = 10 + Math.floor(n / 3) * 380;
   }
   items.push(data);
   saveData();
@@ -685,6 +794,188 @@ function addCard(data, skipBackup) {
     }).catch(() => {});
   }
   return renderCard(data);
+}
+
+// ── Category Card ──
+function addCategoryCard() {
+  pushHistory();
+  const items = currentItems();
+  const wrap = document.getElementById('board-wrap');
+  const data = {
+    type: 'category', id: newId(), name: '새 카테고리',
+    x: wrap.scrollLeft + 20,
+    y: wrap.scrollTop  + 80,
+    w: 900, h: 350
+  };
+  items.push(data);
+  saveData();
+  socket.emit('item_add', { tabId: activeTabId, item: data });
+  const el = renderCategory(data);
+  // Also ensure "카테고리 미분류" exists
+  ensureUnclassifiedCategory();
+  selectItem(data.id);
+  // Start editing the name
+  setTimeout(() => {
+    const strip = el.querySelector('.category-name-strip');
+    if (strip) { strip.focus(); document.execCommand('selectAll', false, null); }
+  }, 50);
+  toast('📂 카테고리가 추가되었습니다');
+  return el;
+}
+
+function renderCategory(data) {
+  const board = document.getElementById('board');
+  const el    = document.createElement('div');
+  el.className  = 'category-card board-item';
+  el.dataset.id = data.id;
+  el.style.left   = (data.x || 20) + 'px';
+  el.style.top    = (data.y || 80) + 'px';
+  el.style.width  = (data.w || 900) + 'px';
+  el.style.height = (data.h || 350) + 'px';
+  el.style.zIndex = ++zTop;
+
+  el.innerHTML = `
+    <div class="category-name-strip" contenteditable="true" spellcheck="false">${esc(data.name||'카테고리')}</div>
+    <div class="category-content" data-cat-id="${data.id}"></div>
+    <div class="category-resize-handle"></div>`;
+
+  const strip = el.querySelector('.category-name-strip');
+
+  // Double-click to edit name (contenteditable already; focus on click)
+  strip.addEventListener('blur', () => {
+    const newName = strip.textContent.trim() || data.name;
+    if (newName !== data.name) {
+      data.name = newName;
+      updateItem(data.id, { name: newName });
+    }
+  });
+  strip.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); strip.blur(); }
+    e.stopPropagation();
+  });
+
+  // Click → select
+  el.addEventListener('mousedown', e => {
+    if (!e.target.isContentEditable && !e.target.classList.contains('category-resize-handle'))
+      selectItem(data.id);
+  });
+
+  // Drag via strip (only when strip is not actively being edited/focused for text)
+  let catDragActive = false, catSx, catSy, catOx, catOy;
+  strip.addEventListener('mousedown', e => {
+    // Allow text cursor if already focused (editing mode)
+    if (document.activeElement === strip) return;
+    pushHistory();
+    catDragActive = true;
+    catSx = e.clientX; catSy = e.clientY;
+    catOx = parseInt(el.style.left) || 0;
+    catOy = parseInt(el.style.top)  || 0;
+    el.classList.add('dragging');
+    el.style.zIndex = ++zTop;
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!catDragActive) return;
+    el.style.left = Math.max(0, catOx + e.clientX - catSx) + 'px';
+    el.style.top  = Math.max(0, catOy + e.clientY - catSy) + 'px';
+  });
+  document.addEventListener('mouseup', () => {
+    if (!catDragActive) return; catDragActive = false;
+    el.classList.remove('dragging');
+    data.x = parseInt(el.style.left);
+    data.y = parseInt(el.style.top);
+    saveData();
+    socket.emit('item_update', { tabId: activeTabId, itemId: data.id, patch: { x: data.x, y: data.y } });
+  });
+
+  // Resize via bottom-right handle
+  const resizeHandle = el.querySelector('.category-resize-handle');
+  let rsx, rsy, row, roh, ractive = false;
+  resizeHandle.addEventListener('mousedown', e => {
+    ractive = true;
+    rsx = e.clientX; rsy = e.clientY;
+    row = parseInt(el.style.width)  || 900;
+    roh = parseInt(el.style.height) || 350;
+    e.stopPropagation(); e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!ractive) return;
+    const nw = Math.max(600, row + e.clientX - rsx);
+    const nh = Math.max(300, roh + e.clientY - rsy);
+    el.style.width  = nw + 'px';
+    el.style.height = nh + 'px';
+    data.w = nw; data.h = nh;
+  });
+  document.addEventListener('mouseup', () => {
+    if (!ractive) return; ractive = false;
+    updateItem(data.id, { w: data.w, h: data.h });
+  });
+
+  board.appendChild(el);
+  return el;
+}
+
+function toggleCatDropdown(e, cardId) {
+  e.stopPropagation();
+  const drop = document.getElementById('catdrop-' + cardId);
+  if (!drop) return;
+  const isOpen = drop.style.display !== 'none';
+  // Close all dropdowns
+  document.querySelectorAll('.cat-dropdown').forEach(d => { d.style.display = 'none'; });
+  if (isOpen) return;
+  // Populate
+  const cats = currentItems().filter(i => i.type === 'category');
+  drop.innerHTML = cats.map(c =>
+    `<div class="cat-dropdown-item" onclick="moveCardToCategory('${cardId}','${c.id}')">${esc(c.name)}</div>`
+  ).join('') || '<div class="cat-dropdown-item" style="color:#9ca3af">카테고리 없음</div>';
+  drop.style.display = 'block';
+}
+
+document.addEventListener('click', () => {
+  document.querySelectorAll('.cat-dropdown').forEach(d => { d.style.display = 'none'; });
+});
+
+function moveCardToCategory(cardId, catId) {
+  // Close all dropdowns
+  document.querySelectorAll('.cat-dropdown').forEach(d => { d.style.display = 'none'; });
+
+  const items = currentItems();
+  const cardData = items.find(i => String(i.id) === String(cardId));
+  const catData  = items.find(i => String(i.id) === String(catId) && i.type === 'category');
+  if (!cardData || !catData) return;
+
+  pushHistory();
+  const oldCatId = cardData.categoryId;
+  cardData.categoryId = catId;
+
+  // Position: next slot within the new category
+  const cardsInNewCat = items.filter(i => (i.type||'card') === 'card' && i.categoryId === catId && String(i.id) !== String(cardId));
+  const n = cardsInNewCat.length;
+  cardData.x = 10 + (n % 3) * 250;
+  cardData.y = 10 + Math.floor(n / 3) * 380;
+
+  saveData();
+  socket.emit('item_update', { tabId: activeTabId, itemId: cardId, patch: { categoryId: catId, x: cardData.x, y: cardData.y } });
+
+  // Move DOM element
+  const cardEl = document.querySelector(`[data-id="${cardId}"]`);
+  if (cardEl) {
+    const newContentArea = document.querySelector(`.category-content[data-cat-id="${catId}"]`);
+    if (newContentArea) {
+      cardEl.style.left = cardData.x + 'px';
+      cardEl.style.top  = cardData.y + 'px';
+      newContentArea.appendChild(cardEl);
+    } else {
+      // Target category not rendered yet — re-render board
+      renderBoard();
+    }
+    // Update the cat-selector-btn label
+    const catName = catData.name || '';
+    const btn = cardEl.querySelector('.cat-selector-btn');
+    if (btn) btn.textContent = '📂 ' + catName;
+  }
+
+  toast(`📂 "${catData.name}" 으로 이동했습니다`);
 }
 
 function renderCard(data) {
@@ -702,6 +993,9 @@ function renderCard(data) {
   const imgHtml = data.image
     ? `<img src="${esc(data.image)}" alt="" loading="lazy" onerror="this.closest('.card-img-wrap').innerHTML='<div class=\\'no-image\\'><span class=\\'no-image-icon\\'>🖼️</span><span>이미지 없음</span></div><div class=\\'img-upload-overlay\\'>📷 이미지 변경</div>'">`
     : `<div class="no-image"><span class="no-image-icon">🖼️</span><span>클릭하여 이미지 추가</span></div>`;
+
+  const catItems = currentItems().filter(i => i.type === 'category');
+  const currentCatName = catItems.find(i => String(i.id) === String(data.categoryId||''))?.name || '(없음)';
 
   card.innerHTML = `
     <div class="card-drag-handle"></div>
@@ -722,6 +1016,10 @@ function renderCard(data) {
     <div class="card-footer">
       <textarea class="card-memo" placeholder="기획 메모..." onmousedown="event.stopPropagation()">${esc(data.memo||'')}</textarea>
       <button class="card-del" onclick="deleteItem('${data.id}')" title="삭제">×</button>
+    </div>
+    <div style="padding:0 10px 8px;position:relative;">
+      <button class="cat-selector-btn" onclick="toggleCatDropdown(event,'${data.id}')">📂 ${esc(currentCatName)}</button>
+      <div class="cat-dropdown" id="catdrop-${data.id}" style="display:none;bottom:calc(100% - 8px);left:10px;"></div>
     </div>`;
 
   // 필드 더블클릭 → 인라인 편집
@@ -762,6 +1060,15 @@ function renderCard(data) {
   });
 
   makeDraggableFromHandle(card, card.querySelector('.card-drag-handle'), data);
+
+  // Render inside category content area if categoryId is set
+  if (data.categoryId) {
+    const contentArea = document.querySelector(`.category-content[data-cat-id="${data.categoryId}"]`);
+    if (contentArea) {
+      contentArea.appendChild(card);
+      return card;
+    }
+  }
   board.appendChild(card);
   return card;
 }
@@ -1074,9 +1381,26 @@ function makeDraggableFromHandle(el, handle, data) {
   document.addEventListener('mouseup', () => {
     if (!active) return; active = false;
     el.classList.remove('dragging');
-    data.x = parseInt(el.style.left);
-    data.y = parseInt(el.style.top);
+    // Constrain within category content area if card belongs to one
+    if (data.categoryId) {
+      const catData = currentItems().find(i => String(i.id) === String(data.categoryId) && i.type === 'category');
+      if (catData) {
+        const contentW = (catData.w || 900) - 120;
+        const contentH = catData.h || 350;
+        const cardW = el.offsetWidth  || 230;
+        const cardH = el.offsetHeight || 300;
+        const cx = Math.min(Math.max(0, parseInt(el.style.left)), contentW - cardW);
+        const cy = Math.min(Math.max(0, parseInt(el.style.top)),  contentH - cardH);
+        el.style.left = cx + 'px';
+        el.style.top  = cy + 'px';
+        data.x = cx; data.y = cy;
+      }
+    } else {
+      data.x = parseInt(el.style.left);
+      data.y = parseInt(el.style.top);
+    }
     saveData();
+    socket.emit('item_update', { tabId: activeTabId, itemId: data.id, patch: { x: data.x, y: data.y } });
   });
 }
 
