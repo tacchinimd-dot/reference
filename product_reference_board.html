@@ -402,6 +402,8 @@ let colIdx      = 0;
 let selectedId  = null;   // 현재 선택된 아이템
 let clipboard   = null;   // 복사된 아이템 (인앱 클립보드)
 let imageBase64 = null;   // 모달에서 업로드한 이미지 base64
+let historyStack = [];    // Ctrl+Z 히스토리
+const MAX_HISTORY = 30;
 
 // ── Init ──
 window.addEventListener('load', () => {
@@ -476,6 +478,16 @@ function onKeyDown(e) {
   const isEditing = tag === 'INPUT' || tag === 'TEXTAREA' ||
     document.activeElement?.isContentEditable;
 
+  // Ctrl+Z
+  if (e.ctrlKey && e.key === 'z' && !isEditing) {
+    e.preventDefault();
+    undoHistory();
+  }
+  // Ctrl+S
+  if (e.ctrlKey && e.key === 's') {
+    e.preventDefault();
+    manualSave();
+  }
   // Ctrl+C
   if (e.ctrlKey && e.key === 'c' && !isEditing) {
     if (selectedId) {
@@ -522,6 +534,27 @@ function saveData() { localStorage.setItem(STORE_KEY, JSON.stringify({ tabs, act
 function currentTab()   { return tabs.find(t => t.id === activeTabId); }
 function currentItems() { return currentTab()?.cards || []; }
 function newId()        { return 'i' + Date.now() + Math.random().toString(36).slice(2, 5); }
+
+function pushHistory() {
+  historyStack.push(JSON.parse(JSON.stringify({ tabs, activeTabId })));
+  if (historyStack.length > MAX_HISTORY) historyStack.shift();
+}
+function undoHistory() {
+  if (historyStack.length === 0) { toast('더 이상 되돌릴 수 없습니다'); return; }
+  const prev = historyStack.pop();
+  tabs = prev.tabs;
+  activeTabId = prev.activeTabId;
+  saveData();
+  renderTabBar();
+  renderBoard();
+  socket.emit('state_upload', { tabs, activeTabId });
+  toast('되돌렸습니다 (Ctrl+Z)');
+}
+function manualSave() {
+  saveData();
+  socket.emit('state_upload', { tabs, activeTabId });
+  toast('저장됨 (Ctrl+S)');
+}
 
 // ── Tab bar ──
 function renderTabBar() {
@@ -598,6 +631,7 @@ function deselectAll() {
   document.querySelectorAll('.board-item.selected').forEach(el => el.classList.remove('selected'));
 }
 function deleteItem(id) {
+  pushHistory();
   const el = document.querySelector(`[data-id="${id}"]`);
   if (el) { el.style.opacity = '0'; el.style.transform = 'scale(0.92)'; el.style.transition = '0.15s'; setTimeout(() => el.remove(), 160); }
   const tab = currentTab();
@@ -608,7 +642,8 @@ function deleteItem(id) {
 }
 
 // ── Add item (generic) ──
-function addItem(data) {
+function addItem(data, skipHistory) {
+  if (!skipHistory) pushHistory();
   const items = currentItems();
   data.id = data.id || newId();
   if (data.x == null) {
@@ -629,6 +664,7 @@ function addItem(data) {
 
 // ── Product Card ──
 function addCard(data, skipBackup) {
+  pushHistory();
   const items = currentItems();
   data.type  = 'card';
   data.id    = data.id    || newId();
@@ -1021,6 +1057,7 @@ function makeDraggableFromHandle(el, handle, data) {
   if (!handle) return;
   let sx, sy, ox, oy, active = false;
   handle.addEventListener('mousedown', e => {
+    pushHistory();
     active = true;
     sx = e.clientX; sy = e.clientY;
     ox = parseInt(el.style.left) || 0;
@@ -1051,6 +1088,7 @@ function makeDraggable(el, data, ignoreSelector, alsoIgnore) {
     if (ignoreSelector && !e.target.closest) return;
     if (alsoIgnore && e.target.matches(alsoIgnore)) return;
     if (alsoIgnore && e.target.closest && e.target.closest(alsoIgnore.split(',')[0])) return;
+    pushHistory();
     active = true;
     sx = e.clientX; sy = e.clientY;
     ox = parseInt(el.style.left) || 0;
