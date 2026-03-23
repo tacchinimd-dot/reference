@@ -651,6 +651,33 @@ function nearestEmptySlot(catId, x, y, excludeId) {
   return slotPos(pc, pr);
 }
 
+function adjustCatPosition(movedData) {
+  const others = currentItems().filter(i => i.type === 'category' && String(i.id) !== String(movedData.id));
+  if (!others.length) return;
+  const w = movedData.w || 900, h = movedData.h || 350;
+  const GAP = 16;
+  function overlapsAny(x, y) {
+    return others.some(o => {
+      const ow = o.w || 900, oh = o.h || 350;
+      return x < o.x + ow + GAP && x + w > o.x - GAP && y < o.y + oh + GAP && y + h > o.y - GAP;
+    });
+  }
+  if (!overlapsAny(movedData.x, movedData.y)) return;
+  const STEP = 40;
+  let bestX = movedData.x, bestY = movedData.y, bestDist = Infinity;
+  for (let dx = -15; dx <= 15; dx++) {
+    for (let dy = -15; dy <= 15; dy++) {
+      const nx = Math.max(0, movedData.x + dx * STEP);
+      const ny = Math.max(0, movedData.y + dy * STEP);
+      if (!overlapsAny(nx, ny)) {
+        const dist = Math.abs(dx) + Math.abs(dy);
+        if (dist < bestDist) { bestDist = dist; bestX = nx; bestY = ny; }
+      }
+    }
+  }
+  if (bestDist < Infinity) { movedData.x = bestX; movedData.y = bestY; }
+}
+
 function pushHistory() {
   historyStack.push(JSON.parse(JSON.stringify({ tabs, activeTabId })));
   if (historyStack.length > MAX_HISTORY) historyStack.shift();
@@ -906,10 +933,10 @@ function renderCategory(data) {
       selectItem(data.id);
   });
 
-  // Drag via strip (only when strip is not actively being edited/focused for text)
+  // Drag via strip or empty content area
   let catDragActive = false, catSx, catSy, catOx, catOy;
-  strip.addEventListener('mousedown', e => {
-    if (isEditingName) return; // editing mode — don't drag
+  function startCatDrag(e) {
+    if (isEditingName) return;
     pushHistory();
     catDragActive = true;
     catSx = e.clientX; catSy = e.clientY;
@@ -918,6 +945,13 @@ function renderCategory(data) {
     el.classList.add('dragging');
     el.style.zIndex = ++zTop;
     e.preventDefault();
+  }
+  strip.addEventListener('mousedown', e => { startCatDrag(e); });
+
+  const contentArea = el.querySelector('.category-content');
+  contentArea.addEventListener('mousedown', e => {
+    // Only drag when clicking the empty background (not a child card/button)
+    if (e.target === contentArea) startCatDrag(e);
   });
   document.addEventListener('mousemove', e => {
     if (!catDragActive) return;
@@ -929,6 +963,9 @@ function renderCategory(data) {
     el.classList.remove('dragging');
     data.x = parseInt(el.style.left);
     data.y = parseInt(el.style.top);
+    adjustCatPosition(data);
+    el.style.left = data.x + 'px';
+    el.style.top  = data.y + 'px';
     saveData();
     socket.emit('item_update', { tabId: activeTabId, itemId: data.id, patch: { x: data.x, y: data.y } });
   });
