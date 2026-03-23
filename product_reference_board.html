@@ -233,7 +233,9 @@
       position: relative;
       overflow: hidden;
       min-height: 300px;
+      cursor: grab;
     }
+    .category-card.dragging .category-content { cursor: grabbing; }
     .category-resize-handle {
       position: absolute;
       bottom: 4px;
@@ -955,8 +957,20 @@ function renderCategory(data) {
   });
   document.addEventListener('mousemove', e => {
     if (!catDragActive) return;
-    el.style.left = Math.max(0, catOx + e.clientX - catSx) + 'px';
-    el.style.top  = Math.max(0, catOy + e.clientY - catSy) + 'px';
+    let nx = Math.max(0, catOx + e.clientX - catSx);
+    let ny = Math.max(0, catOy + e.clientY - catSy);
+    if (e.altKey) {
+      const siblings = currentItems().filter(i => i.type === 'category' && String(i.id) !== String(data.id));
+      const SNAP = 50;
+      let bxd = SNAP, byd = SNAP;
+      siblings.forEach(s => {
+        const dx = Math.abs(s.x - nx), dy = Math.abs(s.y - ny);
+        if (dx < bxd) { bxd = dx; nx = s.x; }
+        if (dy < byd) { byd = dy; ny = s.y; }
+      });
+    }
+    el.style.left = nx + 'px';
+    el.style.top  = ny + 'px';
   });
   document.addEventListener('mouseup', () => {
     if (!catDragActive) return; catDragActive = false;
@@ -1455,8 +1469,20 @@ function makeDraggableFromHandle(el, handle, data) {
   });
   document.addEventListener('mousemove', e => {
     if (!active) return;
-    el.style.left = Math.max(0, ox + e.clientX - sx) + 'px';
-    el.style.top  = Math.max(0, oy + e.clientY - sy) + 'px';
+    let nx = Math.max(0, ox + e.clientX - sx);
+    let ny = Math.max(0, oy + e.clientY - sy);
+    if (e.altKey && data.categoryId) {
+      const siblings = currentItems().filter(i => (i.type||'card') === 'card' && i.categoryId === data.categoryId && String(i.id) !== String(data.id));
+      const SNAP = 50;
+      let bxd = SNAP, byd = SNAP;
+      siblings.forEach(s => {
+        const dx = Math.abs(s.x - nx), dy = Math.abs(s.y - ny);
+        if (dx < bxd) { bxd = dx; nx = s.x; }
+        if (dy < byd) { byd = dy; ny = s.y; }
+      });
+    }
+    el.style.left = nx + 'px';
+    el.style.top  = ny + 'px';
   });
   document.addEventListener('mouseup', () => {
     if (!active) return; active = false;
