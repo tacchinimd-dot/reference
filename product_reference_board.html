@@ -117,6 +117,18 @@
     .card-memo::placeholder { color: #d1d5db; }
     .card-del { background: none; border: none; cursor: pointer; color: #d1d5db; font-size: 18px; padding: 0 2px; line-height: 1; flex-shrink: 0; transition: color 0.15s; }
     .card-del:hover { color: #ef4444; }
+    .card-close-btn {
+      position: absolute; top: 24px; right: 6px;
+      width: 22px; height: 22px;
+      background: rgba(0,0,0,0.45); color: #fff;
+      border: none; border-radius: 50%; cursor: pointer;
+      font-size: 14px; font-weight: 700; line-height: 1;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; transition: opacity 0.15s, background 0.15s;
+      z-index: 10; flex-shrink: 0;
+    }
+    .product-card:hover .card-close-btn { opacity: 1; }
+    .card-close-btn:hover { background: #ef4444 !important; }
 
     /* ── Color picker popup ── */
     .color-popup { position: absolute; top: 30px; right: 6px; background: white; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.18); padding: 8px; display: none; flex-wrap: wrap; gap: 6px; width: 108px; z-index: 200; }
@@ -1115,6 +1127,7 @@ function renderCard(data) {
 
   card.innerHTML = `
     <div class="card-drag-handle"></div>
+    <button class="card-close-btn" title="카드 삭제" onclick="event.stopPropagation();deleteItem('${data.id}')" onmousedown="event.stopPropagation()">×</button>
     <div class="card-img-wrap" onclick="triggerImgUpload(event,'${data.id}')">
       ${imgHtml}
       <div class="img-upload-overlay">📷 클릭하여 변경 · Ctrl+V 붙여넣기</div>
@@ -1170,11 +1183,12 @@ function renderCard(data) {
     updateItem(data.id, { memo: this.value });
   });
 
-  // 클릭 → 선택
+  // 클릭 → 선택 (stopPropagation으로 카테고리로의 버블링 차단)
   card.addEventListener('mousedown', e => {
     const tag = e.target.tagName;
     if (tag !== 'A' && tag !== 'BUTTON' && tag !== 'TEXTAREA' && !e.target.isContentEditable)
       selectItem(data.id);
+    e.stopPropagation();
   });
 
   makeDraggableFromHandle(card, card.querySelector('.card-drag-handle'), data);
