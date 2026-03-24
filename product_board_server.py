@@ -296,7 +296,12 @@ def scrape_product(url: str) -> dict:
         page.route("**/*.{woff,woff2,ttf,otf}", lambda r: r.abort())
         page.goto(url, wait_until="domcontentloaded", timeout=25000)
         try:
-            page.wait_for_load_state("networkidle", timeout=4000)
+            page.wait_for_load_state("networkidle", timeout=7000)
+        except Exception:
+            pass
+        # SPA(React/Next.js) 렌더링 완료 대기
+        try:
+            page.wait_for_selector('[class*="price"],[class*="Price"],[itemprop="price"]', timeout=5000)
         except Exception:
             page.wait_for_timeout(2000)
         raw = page.evaluate(_EXTRACT_JS)
@@ -325,6 +330,31 @@ _EXTRACT_JS = r"""
 () => {
   const result = { name: '', price: '', material: '', image: '' };
 
+  // ── Next.js / __NEXT_DATA__ (SPA 우선 추출) ──
+  try {
+    const nd = document.getElementById('__NEXT_DATA__');
+    if (nd) {
+      const parsed = JSON.parse(nd.textContent);
+      const pp = parsed.props?.pageProps || {};
+      // 29cm, 무신사 등 공통 경로 탐색
+      const prod = pp.product || pp.productDetail || pp.item || pp.goodsDetail ||
+                   pp.initialState?.product || pp.initialState?.goods ||
+                   pp.dehydratedState?.queries?.[0]?.state?.data ||
+                   pp.dehydratedState?.queries?.[0]?.state?.data?.data;
+      if (prod) {
+        result.name  = result.name  || prod.name || prod.title || prod.goodsName || prod.productName || '';
+        const rawPrice = prod.price || prod.salePrice || prod.sellingPrice || prod.retailPrice || prod.finalPrice || '';
+        if (!result.price && rawPrice) result.price = String(rawPrice).replace(/[^0-9,]/g,'') ? String(rawPrice) : '';
+        result.material = result.material || prod.material || prod.fabric || prod.composition || '';
+        const imgs = prod.image || prod.imageUrl || prod.thumbnail ||
+                     prod.listImageUrl || prod.mainImageUrl ||
+                     (prod.images && (Array.isArray(prod.images) ? prod.images[0] : prod.images)) || '';
+        result.image = result.image || (typeof imgs === 'string' ? imgs : (imgs?.url || imgs?.src || imgs?.imageUrl || ''));
+      }
+    }
+  } catch(e) {}
+
+  // ── ld+json Product 스키마 ──
   for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
     try {
       const d = JSON.parse(s.textContent);
@@ -353,7 +383,13 @@ _EXTRACT_JS = r"""
   }
 
   if (!result.price) {
-    const sels = ['[itemprop="price"]','[class*="sale"][class*="price" i]','[class*="current"][class*="price" i]','[data-testid*="price" i]','.price--sale','.price__current'];
+    const sels = [
+      '[itemprop="price"]',
+      '[class*="salePrice" i]','[class*="sale_price" i]','[class*="FinalPrice" i]',
+      '[class*="sale"][class*="price" i]','[class*="current"][class*="price" i]',
+      '[data-testid*="price" i]','.price--sale','.price__current',
+      '[class*="Price"][class*="discount" i]','[class*="discountPrice" i]',
+    ];
     for (const sel of sels) {
       try { const el = document.querySelector(sel); if (el) { const t = el.textContent.trim(); if (/\d/.test(t) && t.length < 35) { result.price = t; break; } } } catch(e) {}
     }
