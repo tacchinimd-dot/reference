@@ -380,19 +380,28 @@ socket.on('user_count', ({ count }) => {
   updateStatusEl(`● 연결됨 (${count}명)`, '#dcfce7', '#16a34a');
 });
 
-// 서버에서 전체 상태 수신 (접속 시 1회)
+// 서버에서 전체 상태 수신 (접속 시 1회 + state_replace 응답)
 socket.on('state_sync', ({ state, userCount }) => {
-  const serverHasData = state?.tabs?.some(t => t.cards?.length > 0);
-  if (!serverHasData) {
-    // 서버가 비어있으면 로컬 데이터를 서버에 업로드
-    const local = loadLocalData();
-    if (local?.tabs?.some(t => t.cards?.length > 0)) {
-      socket.emit('state_upload', local);
-      return;
-    }
-  }
-  applyFullState(state);
   updateStatusEl(`● 연결됨 (${userCount}명)`, '#dcfce7', '#16a34a');
+
+  const countItems = s => (s?.tabs || []).reduce((sum, t) => sum + (t.cards?.length || 0), 0);
+  const serverCount = countItems(state);
+  const local       = loadLocalData();
+  const localCount  = countItems(local);
+
+  if (serverCount === 0 && localCount > 0) {
+    // 서버가 비어있고 로컬에 데이터가 있으면 → 서버에 업로드 (로컬 우선)
+    socket.emit('state_upload', local);
+    return;
+  }
+  if (localCount > serverCount) {
+    // 로컬이 서버보다 많으면 → 로컬 우선 적용 후 서버 동기화
+    socket.emit('state_replace', local);
+    applyFullState(local);
+    return;
+  }
+  // 서버가 같거나 더 많으면 → 서버 상태 적용
+  applyFullState(state);
 });
 
 // 다른 사용자의 변경사항 수신
@@ -724,12 +733,12 @@ function undoHistory() {
   saveData();
   renderTabBar();
   renderBoard();
-  socket.emit('state_upload', { tabs, activeTabId });
+  socket.emit('state_replace', { tabs, activeTabId });
   toast('되돌렸습니다 (Ctrl+Z)');
 }
 function manualSave() {
   saveData();
-  socket.emit('state_upload', { tabs, activeTabId });
+  socket.emit('state_replace', { tabs, activeTabId });
   toast('저장됨 (Ctrl+S)');
 }
 

@@ -218,6 +218,14 @@ def on_state_upload(data):
         save_state(board_state)
         emit("state_sync", {"state": board_state, "userCount": _user_count}, broadcast=True)
 
+@socketio.on("state_replace")
+def on_state_replace(data):
+    """클라이언트가 강제로 전체 상태를 교체 (Undo 등 상태 전체 변경 시)"""
+    global board_state
+    board_state = data
+    save_state(board_state)
+    emit("state_sync", {"state": board_state, "userCount": _user_count}, broadcast=True, include_self=False)
+
 @socketio.on("item_add")
 def on_item_add(data):
     # data: {tabId, item}
