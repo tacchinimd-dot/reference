@@ -531,6 +531,7 @@ window.addEventListener('load', () => {
       const item = currentItems().find(i => String(i.id) === String(selectedId));
       if (item && (item.type === 'card' || !item.type)) {
         e.preventDefault();
+        pushHistory();
         resizeToBase64(file, 800, 800, base64 => {
           const card = document.querySelector(`[data-id="${selectedId}"]`);
           if (!card) return;
@@ -578,17 +579,36 @@ function onKeyDown(e) {
   if (e.ctrlKey && e.key === 'c' && !isEditing) {
     if (selectedId) {
       const item = currentItems().find(i => String(i.id) === String(selectedId));
-      if (item) { clipboard = JSON.parse(JSON.stringify(item)); toast('복사됨'); }
+      if (item) {
+        clipboard = JSON.parse(JSON.stringify(item));
+        // 카테고리 복사 시 하위 카드도 함께 캡처
+        if (item.type === 'category') {
+          clipboard._childCards = JSON.parse(JSON.stringify(
+            currentItems().filter(i => i.categoryId === item.id)
+          ));
+        }
+        toast('복사됨');
+      }
     }
   }
   // Ctrl+V
   if (e.ctrlKey && e.key === 'v' && !isEditing) {
     if (clipboard) {
+      e.preventDefault();
       const copy = JSON.parse(JSON.stringify(clipboard));
+      const childCards = copy._childCards || [];
+      delete copy._childCards;
       copy.id = newId();
       copy.x  = (copy.x || 0) + 24;
       copy.y  = (copy.y || 0) + 24;
       addItem(copy);
+      // 카테고리 붙여넣기 시 하위 카드도 함께 복원
+      childCards.forEach(card => {
+        const cardCopy = JSON.parse(JSON.stringify(card));
+        cardCopy.id = newId();
+        cardCopy.categoryId = copy.id;
+        addItem(cardCopy, true);
+      });
       toast('붙여넣기 됨');
     }
   }
@@ -906,6 +926,7 @@ function renderCategory(data) {
   let isEditingName = false;
   strip.addEventListener('dblclick', e => {
     e.stopPropagation();
+    pushHistory();
     isEditingName = true;
     strip.contentEditable = 'true';
     strip.focus();
@@ -988,6 +1009,7 @@ function renderCategory(data) {
   const resizeHandle = el.querySelector('.category-resize-handle');
   let rsx, rsy, row, roh, ractive = false;
   resizeHandle.addEventListener('mousedown', e => {
+    pushHistory();
     ractive = true;
     rsx = e.clientX; rsy = e.clientY;
     row = parseInt(el.style.width)  || 900;
@@ -1120,6 +1142,7 @@ function renderCard(data) {
   card.querySelectorAll('.card-field').forEach(field => {
     field.addEventListener('dblclick', e => {
       e.stopPropagation();
+      pushHistory();
       field.contentEditable = 'true';
       field.focus();
       const sel = window.getSelection();
@@ -1142,6 +1165,7 @@ function renderCard(data) {
   });
 
   // 메모 저장
+  card.querySelector('.card-memo').addEventListener('focus', function() { pushHistory(); });
   card.querySelector('.card-memo').addEventListener('blur', function() {
     updateItem(data.id, { memo: this.value });
   });
@@ -1175,6 +1199,7 @@ function triggerImgUpload(e, id) {
 function handleImgFile(input, id) {
   const file = input.files[0];
   if (!file) return;
+  pushHistory();
   resizeToBase64(file, 800, 800, base64 => {
     const card = document.querySelector(`[data-id="${id}"]`);
     if (card) {
@@ -1218,6 +1243,7 @@ function toggleColorPicker(e, id) {
 }
 function setCardColor(e, id, color) {
   e.stopPropagation();
+  pushHistory();
   const card = document.querySelector(`[data-id="${id}"]`);
   if (card) card.querySelector('.card-label').style.background = color;
   document.getElementById('cp-' + id).classList.remove('open');
@@ -1227,6 +1253,7 @@ document.addEventListener('click', () => document.querySelectorAll('.color-popup
 
 // ── Text item ──
 function addTextItem() {
+  pushHistory();
   const wrap = document.getElementById('board-wrap');
   const data = {
     type: 'text', id: newId(),
@@ -1274,6 +1301,7 @@ function renderText(data) {
 }
 
 function startTextEdit(el, data) {
+  pushHistory();
   el.classList.add('editing');
   const content = el.querySelector('.text-content');
   content.contentEditable = 'true';
@@ -1314,6 +1342,7 @@ document.addEventListener('click', () => {
 });
 
 function addShapeItem(shapeType) {
+  pushHistory();
   const wrap = document.getElementById('board-wrap');
   const isLine  = shapeType === 'line';
   const isCurve = shapeType === 'curve';
@@ -1382,6 +1411,7 @@ function renderShape(data) {
   const label = el.querySelector('.shape-label');
   label.addEventListener('dblclick', e => {
     e.stopPropagation();
+    pushHistory();
     label.contentEditable = 'true';
     label.focus();
     const sel = window.getSelection(), range = document.createRange();
@@ -1418,6 +1448,7 @@ function toggleShapeColorPicker(e, id) {
 }
 function setShapeColor(e, id, color) {
   e.stopPropagation();
+  pushHistory();
   const el = document.querySelector(`[data-id="${id}"]`);
   if (el) {
     el.style.background = color;
@@ -1437,6 +1468,7 @@ function makeResizable(el, data) {
   if (!handle) return;
   let sx, sy, ow, oh, active = false;
   handle.addEventListener('mousedown', e => {
+    pushHistory();
     active = true; sx = e.clientX; sy = e.clientY;
     ow = parseInt(el.style.width) || 140;
     oh = parseInt(el.style.height) || 90;
@@ -1634,6 +1666,7 @@ function clearBoard() {
   const tab = currentTab();
   if (!tab) return;
   if (!confirm(`"${tab.name}" 탭의 항목 ${tab.cards.length}개를 모두 삭제할까요?`)) return;
+  pushHistory();
   document.getElementById('board').innerHTML = '';
   tab.cards = []; saveData();
   socket.emit('tab_clear', { tabId: activeTabId });
