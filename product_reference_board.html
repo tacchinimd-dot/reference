@@ -110,8 +110,11 @@
     .card-field[data-field="price"] { font-size: 15px; color: #6366f1; }
     .card-field[data-field="material"] { font-size: 11px; color: #6b7280; font-weight: 400; }
     .card-field:empty:before { content: attr(data-placeholder); color: #d1d5db; font-weight: 400; }
-    .card-source a { font-size: 10px; color: #9ca3af; text-decoration: none; }
-    .card-source a:hover { color: #6366f1; text-decoration: underline; }
+    .card-source { padding: 2px 0; }
+    .card-source a { font-size: 11px; color: #6366f1; text-decoration: none; display: inline-block; padding: 2px 0; }
+    .card-source a:hover { color: #4f46e5; text-decoration: underline; }
+    .card-field[data-field="name"][data-has-url="true"] { cursor: pointer; color: #4338ca; }
+    .card-field[data-field="name"][data-has-url="true"]:hover { text-decoration: underline; }
     .card-footer { display: flex; align-items: flex-end; gap: 4px; padding: 4px 10px 6px; border-top: 1px solid #f3f4f6; flex-shrink: 0; }
     .card-memo { flex: 1; border: none; resize: none; font-size: 11px; color: #374151; background: transparent; outline: none; font-family: inherit; height: 30px; line-height: 1.4; }
     .card-memo::placeholder { color: #d1d5db; }
@@ -1146,7 +1149,7 @@ function renderCard(data) {
       </div>
     </div>
     <div class="card-body">
-      <div class="card-field" data-field="name" data-placeholder="상품명" contenteditable="false">${esc(data.name||'')}</div>
+      <div class="card-field" data-field="name" data-placeholder="상품명" contenteditable="false" ${data.url ? `data-has-url="true" data-url="${esc(data.url)}"` : ''}>${esc(data.name||'')}</div>
       <div class="card-field" data-field="price" data-placeholder="가격" contenteditable="false">${esc(data.price||'')}</div>
       <div class="card-field" data-field="material" data-placeholder="소재" contenteditable="false">${esc(data.material||'')}</div>
       ${data.url ? `<div class="card-source"><a href="${esc(data.url)}" target="_blank" onclick="event.stopPropagation()">🔗 원본 보기</a></div>` : ''}
@@ -1159,6 +1162,20 @@ function renderCard(data) {
       <button class="cat-selector-btn" onclick="toggleCatDropdown(event,'${data.id}')">📂 ${esc(currentCatName)}</button>
       <div class="cat-dropdown" id="catdrop-${data.id}" style="display:none;bottom:calc(100% - 8px);left:10px;"></div>
     </div>`;
+
+  // 상품명 클릭 → URL 이동 (더블클릭은 편집)
+  const nameField = card.querySelector('.card-field[data-field="name"]');
+  if (nameField && data.url) {
+    let clickTimer = null;
+    nameField.addEventListener('click', e => {
+      if (nameField.contentEditable === 'true') return;
+      e.stopPropagation();
+      clickTimer = setTimeout(() => { window.open(data.url, '_blank'); }, 250);
+    });
+    nameField.addEventListener('dblclick', e => {
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+    });
+  }
 
   // 필드 더블클릭 → 인라인 편집
   card.querySelectorAll('.card-field').forEach(field => {
@@ -1620,7 +1637,7 @@ async function fetchProduct() {
     const r    = await fetch(`${SERVER}/scrape?url=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(30000) });
     const data = await r.json();
     if (data.error) throw new Error(data.error);
-    if (!data.image) { openModal(url, true); return; }
+    if (!data.image && !data.name && !data.price) { openModal(url, true); return; }
     data.url = url;
     const card = addCard(data);
     input.value = '';

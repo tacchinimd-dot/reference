@@ -3,7 +3,7 @@ services:
     name: product-reference-board
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt && playwright install-deps chromium && playwright install chromium
+    buildCommand: pip install -r requirements.txt
     startCommand: python product_board_server.py
     envVars:
       - key: RENDER

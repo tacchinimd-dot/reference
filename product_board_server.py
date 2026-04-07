@@ -9,7 +9,11 @@ from flask import Flask, request, jsonify, send_from_directory, send_file
 import io
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
-from playwright.sync_api import sync_playwright
+try:
+    from playwright.sync_api import sync_playwright
+    HAS_PLAYWRIGHT = True
+except ImportError:
+    HAS_PLAYWRIGHT = False
 import base64 as b64lib
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -25,23 +29,81 @@ HTML_FILE  = "product_reference_board.html"
 STATE_FILE = os.path.join(BASE_DIR, "board_state.json")
 XLSX_PATH  = os.path.join(BASE_DIR, "레퍼런스_백업.xlsx")
 
+# ── 데이터베이스 (PostgreSQL) ────────────────────────────────────────────────
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+USE_DB = bool(DATABASE_URL)
+
+if USE_DB:
+    import psycopg2
+    from psycopg2.extras import Json
+
+    def _get_conn():
+        return psycopg2.connect(DATABASE_URL, sslmode="require")
+
+    def _init_db():
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS board_state (
+                        id INTEGER PRIMARY KEY DEFAULT 1,
+                        state JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        updated_at TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+                cur.execute("SELECT COUNT(*) FROM board_state")
+                if cur.fetchone()[0] == 0:
+                    cur.execute(
+                        "INSERT INTO board_state (id, state) VALUES (1, %s)",
+                        [Json({"tabs": [{"id": "default", "name": "탭 1", "cards": []}]})]
+                    )
+            conn.commit()
+        print("[DB] PostgreSQL 테이블 초기화 완료")
+
+    _init_db()
+
 # ── 서버 상태 ─────────────────────────────────────────────────────────────────
 _state_lock  = threading.Lock()
 _user_count  = 0
 
+_DEFAULT_STATE = {"tabs": [{"id": "default", "name": "탭 1", "cards": []}]}
+
 def load_state():
-    try:
-        if os.path.exists(STATE_FILE):
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {"tabs": [{"id": "default", "name": "탭 1", "cards": []}]}
+    if USE_DB:
+        try:
+            with _get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT state FROM board_state WHERE id = 1")
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        return row[0]
+        except Exception as e:
+            print(f"[DB] load_state 오류: {e}")
+        return dict(_DEFAULT_STATE)
+    else:
+        try:
+            if os.path.exists(STATE_FILE):
+                with open(STATE_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return dict(_DEFAULT_STATE)
 
 def save_state(state):
     with _state_lock:
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(state, f, ensure_ascii=False, indent=2)
+        if USE_DB:
+            try:
+                with _get_conn() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "UPDATE board_state SET state = %s, updated_at = NOW() WHERE id = 1",
+                            [Json(state)]
+                        )
+                    conn.commit()
+            except Exception as e:
+                print(f"[DB] save_state 오류: {e}")
+        else:
+            with open(STATE_FILE, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
 
 board_state = load_state()
 
@@ -183,13 +245,37 @@ def scrape():
     url = request.args.get("url", "").strip()
     if not url:
         return jsonify({"error": "URL이 필요합니다"}), 400
-    try:
-        return jsonify(scrape_product(url))
-    except Exception as e:
+
+    on_render = bool(os.environ.get("RENDER"))
+    result = None
+
+    # 1차: Playwright 시도 (Render 환경 또는 미설치 시 스킵)
+    if not on_render and HAS_PLAYWRIGHT:
         try:
-            return jsonify(scrape_fallback(url))
+            result = scrape_product(url)
         except Exception:
-            return jsonify({"error": str(e)}), 500
+            pass
+
+    # 2차: 결과가 없거나 이미지+상품명 모두 비어 있으면 HTTP fallback
+    if not result or (not result.get("image") and not result.get("name")):
+        try:
+            result = scrape_fallback(url)
+        except Exception:
+            pass
+
+    # 3차: 두 방법 모두 부분 결과면 병합 (Playwright + fallback)
+    if not on_render and result and (not result.get("image") or not result.get("name")):
+        try:
+            fb = scrape_fallback(url)
+            for k in ("image", "name", "price", "material"):
+                if not result.get(k) and fb.get(k):
+                    result[k] = fb[k]
+        except Exception:
+            pass
+
+    if not result:
+        return jsonify({"error": "상품 정보를 가져올 수 없습니다"}), 500
+    return jsonify(result)
 
 # ── Socket.IO Events ──────────────────────────────────────────────────────────
 @socketio.on("connect")
@@ -293,15 +379,32 @@ def scrape_product(url: str) -> dict:
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
-            args=["--disable-blink-features=AutomationControlled"],
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+            ],
         )
         ctx = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             viewport={"width": 1280, "height": 900},
             locale="ko-KR",
+            extra_http_headers={
+                "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "Sec-CH-UA": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+                "Sec-CH-UA-Mobile": "?0",
+                "Sec-CH-UA-Platform": '"Windows"',
+            },
         )
         page = ctx.new_page()
-        page.route("**/*.{woff,woff2,ttf,otf}", lambda r: r.abort())
+        # navigator.webdriver 숨기기
+        page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['ko-KR', 'ko', 'en-US', 'en'] });
+            window.chrome = { runtime: {} };
+        """)
         page.goto(url, wait_until="domcontentloaded", timeout=25000)
         try:
             page.wait_for_load_state("networkidle", timeout=7000)
@@ -318,21 +421,136 @@ def scrape_product(url: str) -> dict:
 
 def scrape_fallback(url: str) -> dict:
     import urllib.request, re
+    from bs4 import BeautifulSoup
     req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-        "Accept-Language": "ko-KR,ko;q=0.9",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Sec-CH-UA": '"Google Chrome";v="131", "Chromium";v="131"',
     })
-    html = urllib.request.urlopen(req, timeout=10).read().decode("utf-8", errors="ignore")
+    html = urllib.request.urlopen(req, timeout=15).read().decode("utf-8", errors="ignore")
+    soup = BeautifulSoup(html, "html.parser")
 
+    result = {"name": "", "price": "", "material": "", "image": ""}
+
+    # ── 1) ld+json Product 스키마 파싱 ──
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            d = json.loads(script.string or "")
+            items = [d] + (d.get("@graph") or [])
+            for item in items:
+                if item.get("@type") != "Product":
+                    continue
+                result["name"] = result["name"] or item.get("name", "")
+                imgs = item.get("image", "")
+                if isinstance(imgs, list):
+                    result["image"] = result["image"] or (imgs[0] if imgs else "")
+                elif isinstance(imgs, dict):
+                    result["image"] = result["image"] or imgs.get("url", "")
+                else:
+                    result["image"] = result["image"] or str(imgs)
+                offers = item.get("offers", {})
+                if isinstance(offers, list):
+                    offers = offers[0] if offers else {}
+                if not result["price"] and offers.get("price"):
+                    cur = offers.get("priceCurrency", "")
+                    result["price"] = f"{cur} {offers['price']}".strip()
+                if not result["material"] and item.get("material"):
+                    mat = item["material"]
+                    result["material"] = mat if isinstance(mat, str) else (mat.get("name", ""))
+                if not result["material"] and item.get("description"):
+                    result["material"] = _extract_material(item["description"])
+        except Exception:
+            pass
+
+    # ── 2) __NEXT_DATA__ (Next.js SPA) ──
+    next_script = soup.find("script", id="__NEXT_DATA__")
+    if next_script and next_script.string:
+        try:
+            nd = json.loads(next_script.string)
+            pp = (nd.get("props") or {}).get("pageProps") or {}
+            prod = (pp.get("product") or pp.get("productDetail") or pp.get("item")
+                    or pp.get("goodsDetail") or (pp.get("initialState") or {}).get("product")
+                    or (pp.get("initialState") or {}).get("goods"))
+            if not prod:
+                queries = ((pp.get("dehydratedState") or {}).get("queries") or [{}])
+                qdata = (queries[0].get("state") or {}).get("data") or {}
+                prod = qdata.get("data") or qdata
+            if prod and isinstance(prod, dict):
+                result["name"] = result["name"] or prod.get("name") or prod.get("title") or prod.get("goodsName") or prod.get("productName") or ""
+                raw_price = prod.get("price") or prod.get("salePrice") or prod.get("sellingPrice") or prod.get("retailPrice") or ""
+                if not result["price"] and raw_price:
+                    result["price"] = str(raw_price)
+                result["material"] = result["material"] or prod.get("material") or prod.get("fabric") or prod.get("composition") or ""
+                img_val = prod.get("image") or prod.get("imageUrl") or prod.get("thumbnail") or prod.get("listImageUrl") or prod.get("mainImageUrl") or ""
+                if isinstance(img_val, list):
+                    img_val = img_val[0] if img_val else ""
+                if isinstance(img_val, dict):
+                    img_val = img_val.get("url") or img_val.get("src") or img_val.get("imageUrl") or ""
+                result["image"] = result["image"] or str(img_val)
+        except Exception:
+            pass
+
+    # ── 3) Open Graph / meta 태그 ──
     def find_meta(prop):
-        m = re.search(rf'(?:property|name)=["\'](?:og:|twitter:)?{prop}["\'][^>]+content=["\']([^"\']+)["\']', html, re.I)
-        if not m:
-            m = re.search(rf'content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:|twitter:)?{prop}["\']', html, re.I)
-        return m.group(1).strip() if m else ""
+        for prefix in ("", "og:", "twitter:"):
+            tag = soup.find("meta", attrs={"property": f"{prefix}{prop}"}) or soup.find("meta", attrs={"name": f"{prefix}{prop}"})
+            if tag and tag.get("content"):
+                return tag["content"].strip()
+        return ""
 
-    image = find_meta("image")
-    if image and image.startswith("//"): image = "https:" + image
-    return _post_process({"name": find_meta("title"), "price": find_meta("price:amount") or find_meta("price"), "material": "", "image": image}, url)
+    result["name"]  = result["name"]  or find_meta("title") or (soup.find("h1").get_text(strip=True) if soup.find("h1") else "")
+    result["image"] = result["image"] or find_meta("image")
+    if not result["price"]:
+        result["price"] = find_meta("price:amount") or find_meta("price")
+        if result["price"] and not re.search(r'[\u20a9$€£¥]', result["price"]) and not re.match(r'^[A-Z]{3}\s', result["price"]):
+            cur = find_meta("price:currency")
+            if cur:
+                result["price"] = f"{cur} {result['price']}"
+
+    # ── 4) HTML 구조에서 가격 추출 ──
+    if not result["price"]:
+        price_sels = [
+            {"attrs": {"itemprop": "price"}},
+            {"class_": re.compile(r"sale.*price|price.*sale|current.*price|final.*price|discount.*price", re.I)},
+            {"attrs": {"data-testid": re.compile(r"price", re.I)}},
+        ]
+        for sel in price_sels:
+            tag = soup.find(**sel)
+            if tag:
+                txt = tag.get_text(strip=True)
+                if re.search(r'\d', txt) and len(txt) < 35:
+                    result["price"] = txt
+                    break
+
+    # ── 5) 소재 추출 ──
+    if not result["material"]:
+        mat_tag = soup.find(attrs={"itemprop": "material"}) or soup.find(class_=re.compile(r"material|fabric|composition", re.I))
+        if mat_tag:
+            result["material"] = mat_tag.get_text(strip=True)[:120]
+    if not result["material"]:
+        result["material"] = _extract_material(soup.get_text())
+
+    for k in result:
+        result[k] = re.sub(r'\s+', ' ', (result[k] or "")).strip()
+    return _post_process(result, url)
+
+
+def _extract_material(text: str) -> str:
+    """텍스트에서 소재 정보 추출"""
+    if not text:
+        return ""
+    import re
+    m1 = re.search(r'\d+%\s*[A-Za-z\uac00-\ud7a3]+(?:\s*[,/·]\s*\d+%\s*[A-Za-z\uac00-\ud7a3]+)+', text)
+    if m1:
+        return m1.group(0).strip()[:120]
+    m2 = re.search(r'(?:소재|원단|재질|fabric|material|composition)\s*[:\s]+([^\n.<]{4,100})', text, re.I)
+    if m2:
+        val = m2.group(1).strip()
+        if re.match(r'^(JSON|HTML|CSS|script|function|var |const |let |http)', val, re.I):
+            return ""
+        return val[:120]
+    return ""
 
 _EXTRACT_JS = r"""
 () => {
@@ -385,7 +603,7 @@ _EXTRACT_JS = r"""
   result.name  = result.name  || m('og:title')  || m('twitter:title')  || (document.querySelector('h1') || {}).textContent || '';
   result.image = result.image || m('og:image')  || m('twitter:image')  || '';
   result.price = result.price || m('product:price:amount') || m('og:price:amount') || '';
-  if (result.price && !/[\u20a9$\u20ac\xa3\xa5]/.test(result.price)) {
+  if (result.price && !/[\u20a9$\u20ac\xa3\xa5]/.test(result.price) && !/^[A-Z]{3}\s/.test(result.price)) {
     const cur = m('product:price:currency') || m('og:price:currency');
     if (cur) result.price = cur + ' ' + result.price;
   }
@@ -420,8 +638,13 @@ _EXTRACT_JS = r"""
     if (!text) return '';
     const m1 = text.match(/\d+%\s*[A-Za-z\uac00-\ud7a3]+(?:\s*[,\/\u00b7]\s*\d+%\s*[A-Za-z\uac00-\ud7a3]+)+/);
     if (m1) return m1[0].trim().slice(0, 120);
-    const m2 = text.match(/(?:\uc18c\uc7ac|\uc6d0\ub2e8|\uc7ac\uc9c8|fabric|material|composition|content)\s*[:\s]+([^\n.<]{4,100})/i);
-    if (m2) return m2[1].trim().slice(0, 120);
+    const m2 = text.match(/(?:\uc18c\uc7ac|\uc6d0\ub2e8|\uc7ac\uc9c8|fabric|material|composition)\s*[:\s]+([^\n.<]{4,100})/i);
+    if (m2) {
+      const val = m2[1].trim();
+      // 잘못된 매칭 필터링 (JSON, script 등 기술 용어)
+      if (/^(JSON|HTML|CSS|script|function|var |const |let |http)/i.test(val)) return '';
+      return val.slice(0, 120);
+    }
     return '';
   }
 
@@ -473,6 +696,7 @@ def start(open_browser=False):
             import subprocess
             subprocess.Popen(["cmd", "/c", "start", f"http://localhost:{port}"], shell=False)
         threading.Timer(1.5, _open).start()
+    print(f"  [저장소] {'PostgreSQL (외부 DB)' if USE_DB else 'board_state.json (로컬 파일)'}")
     if not on_render:
         import socket as _sock
         host_ip = _sock.gethostbyname(_sock.gethostname())
@@ -480,6 +704,7 @@ def start(open_browser=False):
         print("  상품 레퍼런스 보드  (실시간 협업)")
         print(f"  내 PC:    http://localhost:{port}")
         print(f"  같은 네트워크 팀원:  http://{host_ip}:{port}")
+        print(f"  저장소:   {'PostgreSQL' if USE_DB else '로컬 파일'}")
         print("  종료하려면 Ctrl+C 또는 창을 닫으세요")
         print("=" * 54)
     socketio.run(app, host="0.0.0.0", port=port, debug=False, allow_unsafe_werkzeug=True)

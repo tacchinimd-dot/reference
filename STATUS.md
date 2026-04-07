@@ -60,6 +60,17 @@
 - [x] PORT 환경변수 대응 (Render 동적 포트)
 - [x] RENDER 환경변수 감지 시 브라우저 오픈 스킵
 
+### 버그 수정 (2026-03-26)
+- [x] **스크래핑 전면 실패 수정** — 어떤 URL을 넣어도 이미지·상품명·가격을 가져오지 못하던 문제 해결
+  - **원인 1: Playwright 빈 결과 시 fallback 미실행** — Playwright가 exception 없이 빈 결과를 반환하면 HTTP fallback이 동작하지 않음
+    - 수정: Playwright → 빈 결과 시 HTTP fallback 자동 시도 → 두 결과 병합 (3단계 전략)
+  - **원인 2: 봇 감지 차단** — User-Agent 오래됨(Chrome/124), `navigator.webdriver` 감지됨
+    - 수정: Chrome/131로 업데이트, `navigator.webdriver` 숨기기, Sec-CH-UA 헤더 추가, `window.chrome` 에뮬레이션
+  - **원인 3: 이미지 없으면 무조건 수동입력 모달** — 이미지만 없어도 카드 미생성
+    - 수정: 이미지·상품명·가격 모두 없을 때만 수동 입력 모달 표시 (일부라도 있으면 카드 생성)
+- [x] **가격 통화 중복 수정** — "KRW KRW 349000" → "KRW 349000" (ld+json에서 이미 통화 포함 시 meta 태그에서 재추가 방지)
+- [x] **소재 오탐 수정** — extractMaterial이 "JSON", "HTML" 등 기술 용어를 소재로 잘못 추출하던 문제 필터링 추가
+
 ---
 
 ## 앞으로 해야 할 작업
