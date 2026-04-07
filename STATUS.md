@@ -56,9 +56,20 @@
 
 ### 배포 준비
 - [x] requirements.txt 생성
-- [x] render.yaml 생성 (Playwright Chromium 포함 빌드 설정)
+- [x] render.yaml 생성
 - [x] PORT 환경변수 대응 (Render 동적 포트)
 - [x] RENDER 환경변수 감지 시 브라우저 오픈 스킵
+
+### Render 배포 & PostgreSQL (2026-04-07)
+- [x] **Render.com 배포 완료** — GitHub 연동, 자동 재배포
+- [x] **PostgreSQL 데이터 영속성** — Render PostgreSQL 연동 (JSONB 저장)
+  - DATABASE_URL 환경변수 감지 시 자동 PostgreSQL 사용
+  - 미설정 시 기존 board_state.json 파일 방식 유지 (로컬 호환)
+  - 재배포·재시작해도 데이터 영구 보존
+- [x] **Render 환경 스크래핑 최적화** — Playwright 제거, HTTP fallback 강화
+  - BeautifulSoup 기반 ld+json, __NEXT_DATA__, meta 태그, HTML 구조 파싱
+  - Render 무료 플랜 메모리 제한 해결
+- [x] **상품명 클릭 → URL 이동** 기능 추가 (클릭=이동, 더블클릭=편집)
 
 ### 버그 수정 (2026-03-26)
 - [x] **스크래핑 전면 실패 수정** — 어떤 URL을 넣어도 이미지·상품명·가격을 가져오지 못하던 문제 해결
@@ -74,21 +85,6 @@
 ---
 
 ## 앞으로 해야 할 작업
-
-### 즉시 필요
-- [ ] **GitHub repository 생성 및 파일 업로드**
-  - 업로드 대상: html, py, requirements.txt, render.yaml
-  - 제외 대상: board_state.json, 레퍼런스_백업.xlsx, __pycache__
-- [ ] **Render.com 배포**
-  - GitHub repo 연결
-  - Start Command: `python product_board_server.py`
-  - 배포 완료 후 URL 확인
-
-### 배포 후 개선 검토
-- [ ] **데이터 영속성 문제 해결**
-  - Render 무료 플랜은 재시작 시 board_state.json 초기화됨
-  - 해결 방안: Redis / SQLite + Render Disk / 외부 DB 연동
-- [ ] **.gitignore 추가** (board_state.json, xlsx, __pycache__ 제외)
 
 ### 선택적 기능 추가 (요청 시)
 - [ ] 카드 정렬·그룹화 기능
@@ -120,7 +116,7 @@ https://[프로젝트명].onrender.com 주소를 팀원에게 공유
 
 ## 기술 스택
 - **Frontend**: Vanilla HTML/CSS/JS, Socket.IO client
-- **Backend**: Python, Flask, Flask-SocketIO, eventlet
-- **Scraper**: Playwright (headless Chromium) + urllib fallback
-- **Storage**: JSON 파일 (로컬), openpyxl xlsx 백업
-- **Deploy**: Render.com (무료 플랜)
+- **Backend**: Python, Flask, Flask-SocketIO
+- **Scraper**: Playwright (로컬) / BeautifulSoup + urllib (Render)
+- **Storage**: PostgreSQL JSONB (Render) / JSON 파일 (로컬), openpyxl xlsx 백업
+- **Deploy**: Render.com (무료 플랜) + Render PostgreSQL

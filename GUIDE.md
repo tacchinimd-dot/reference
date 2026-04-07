@@ -65,8 +65,7 @@
   | Region | Singapore (한국과 가장 가까움) |
   | Branch | main |
   | Runtime | Python 3 |
-  | Build Command | `pip install -r requirements.txt && playwright
-  install-deps chromium && playwright install chromium` |
+  | Build Command | `pip install -r requirements.txt` |
   | Start Command | `python product_board_server.py` |
   | Plan | **Free** |
 
@@ -75,6 +74,31 @@
      - Key: `RENDER` / Value: `true`
 
   6. **`Create Web Service`** 클릭
+
+  ---
+
+  ### Step 3-2. PostgreSQL 데이터베이스 생성 (필수)
+
+  > 이 단계를 건너뛰면 서버 재시작/재배포 시 모든 데이터가 사라집니다.
+
+  1. Render 대시보드에서 **`New +`** → **`PostgreSQL`** 클릭
+  2. 아래와 같이 설정:
+
+  | 항목 | 값 |
+  |------|-----|
+  | Name | 원하는 이름 (예: reference-board-db) |
+  | Database | 비워두세요 (자동 생성) |
+  | User | 비워두세요 (자동 생성) |
+  | Region | 웹 서비스와 같은 Region 선택 |
+  | PostgreSQL Version | 기본값 그대로 |
+  | Plan | **Free** |
+
+  3. **`Create Database`** 클릭
+  4. DB 생성 완료 후 **Info** 섹션에서 **`Internal Database URL`** 복사
+  5. Step 3에서 만든 웹 서비스 → **`Environment`** 탭 → **`Add Environment
+  Variable`**:
+     - Key: `DATABASE_URL` / Value: 복사한 Internal Database URL
+  6. **`Save Changes`** → 자동 재배포 시작
 
   ---
 
@@ -165,8 +189,10 @@
   데이터로 운영됩니다.
 
   **Q. 데이터가 사라져요**
-  A. Render 무료 플랜은 재배포 시 서버 내 파일이 초기화됩니다. 중요한
-  데이터는 Excel 내보내기 기능으로 백업하세요.
+  A. PostgreSQL을 연동했는지 확인하세요 (Step 3-2). DATABASE_URL 환경변수가
+  설정되어 있으면 데이터는 재배포/재시작해도 영구 보존됩니다.
+  환경변수가 없으면 서버 내 파일(board_state.json)에 저장되므로 재배포 시
+  초기화됩니다.
 
   **Q. 접속자가 많으면 느려지나요?**
   A. Render 무료 플랜은 소규모 팀(10명 이하)에 적합합니다. 더 많은 인원이
