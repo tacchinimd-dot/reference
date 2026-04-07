@@ -116,6 +116,20 @@ def index():
 def ping():
     return jsonify({"ok": True})
 
+BOARD_PIN = os.environ.get("BOARD_PIN", "")
+
+@app.route("/check-pin")
+def check_pin():
+    """PIN 설정 여부 확인 (비밀번호 자체는 노출하지 않음)"""
+    return jsonify({"required": bool(BOARD_PIN)})
+
+@app.route("/verify-pin", methods=["POST"])
+def verify_pin():
+    pin = (request.get_json() or {}).get("pin", "")
+    if pin == BOARD_PIN:
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": "비밀번호가 틀렸습니다"}), 401
+
 @app.route("/backup", methods=["POST"])
 def backup():
     try:
