@@ -1221,7 +1221,7 @@ function renderCard(data) {
     </div>
     <div class="card-body">
       <div class="card-field" data-field="name" data-placeholder="상품명" contenteditable="false" ${data.url ? `data-has-url="true" data-url="${esc(data.url)}"` : ''}>${esc(data.name||'')}</div>
-      <div class="card-field" data-field="price" data-placeholder="가격" contenteditable="false">${esc(data.price||'')}</div>
+      <div class="card-field" data-field="price" data-placeholder="가격" contenteditable="false">${esc(formatPrice(data.price||''))}</div>
       <div class="card-field" data-field="material" data-placeholder="소재" contenteditable="false">${esc(data.material||'')}</div>
       ${data.url ? `<div class="card-source"><a href="${esc(data.url)}" target="_blank" onclick="event.stopPropagation()">🔗 원본 보기</a></div>` : ''}
     </div>
@@ -1786,6 +1786,16 @@ function clearBoard() {
 
 // ── Helpers ──
 function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function formatPrice(s) {
+  if (!s) return '';
+  const m = s.match(/^([A-Z]{3}|[\u20a9$€£¥])\s*/);
+  const prefix = m ? m[0] : '';
+  let num = s.slice(prefix.length);
+  num = num.replace(/\.\d+/, '').replace(/[^0-9]/g, '');
+  if (!num) return s;
+  const formatted = Number(num).toLocaleString('ko-KR');
+  return (prefix + formatted).trim();
+}
 function setLoading(v) { document.getElementById('loading').classList.toggle('active', v); }
 let toastTimer;
 function toast(msg) {
